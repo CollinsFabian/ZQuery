@@ -6,18 +6,8 @@ namespace ZQuery\Support;
 
 class ConfigLoader
 {
-    private array $config;
-
-    public function __construct(string $filePath)
+    public static function get(string $key, mixed $default = null): mixed
     {
-        if (!file_exists($filePath)) {
-            throw new \RuntimeException("Config file not found: $filePath");
-        }
-        $this->config = require $filePath;
-    }
-
-    public function get(string $key, mixed $default = null): mixed
-    {
-        return $this->config[$key] ?? $default;
+        return Environment::get($key, $default);
     }
 }

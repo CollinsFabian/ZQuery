@@ -2,11 +2,14 @@
 
 use ZQuery\Support\ConfigLoader;
 use ZQuery\Support\DatabaseChecker;
+use ZQuery\Support\Environment;
 
-$config = new ConfigLoader(__DIR__ . '/../../config/config.php');
-$pdo = new PDO($config->get('dsn'), $config->get('user'), $config->get('password'));
+Environment::load(__DIR__ . '/../../config/.env');
 
-$dbCheck = new DatabaseChecker($pdo);
-if (!$dbCheck->ping()) {
-    die("Database is down!");
-}
+$config = new ConfigLoader;
+
+$db = new PDO($config::get('DB_PDO_DSN'), $config::get('DB_USER'), $config::get('DB_PASSWORD'));
+// $db = new mysqli($config::get('DB_HOST'), $config::get('DB_USER'), $config::get('DB_PASSWORD'), $config::get('DB_NAME'), $config::get('DB_PORT'));
+
+$dbCheck = new DatabaseChecker($db);
+if (!$dbCheck->ping()) die("Database is down!");

@@ -3,6 +3,8 @@
 
 # Environment variables
 .env
+/config/
+*config.*
 
 # Logs
 *.log
