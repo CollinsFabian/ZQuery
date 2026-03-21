@@ -1,0 +1,26 @@
+# Dependencies
+/vendor/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+/logs/
+
+# Cache
+/cache/
+
+# Temporary files
+/tmp/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# PHPUnit
+/phpunit.xml
