@@ -18,7 +18,17 @@ class ZQuery
     /**
      * ZQuery
      *
-     * @param array $config accepts 'engine' => 'pdo'|'mysqli', 'grammar' => GrammarInterface, 'prefix' => optional table prefix string, and connection params
+     * @param array $config accepts 'engine' => 'pdo'|'mysqli', 'grammar' => GrammarInterface, 'prefix' => optional table prefix string, and connection params,
+     *
+     * example
+     * ```
+     * $config = [
+     * "prefix" => "DB_TABLES_PREFIX_" ?? "",
+     * "engine" => "pdo",
+     * "pdo" => instanceof PDO,
+     * "grammer" => instanceof MysqlGrammar| instanceof PostgresGrammar,
+     * ];
+     * ```
      */
     public function __construct(array $config)
     {
