@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ZQuery\Connection;
 
 use \PDOStatement as NativeStatement;
+use ZQuery\Exceptions\ConnectionException;
 
 class PdoStatement implements StatementInterface
 {
@@ -24,7 +25,9 @@ class PdoStatement implements StatementInterface
 
     public function execute(): void
     {
-        $this->stmt->execute();
+        if (!$this->stmt->execute()) {
+            throw new ConnectionException($this->stmt->errorInfo()[2]);
+        }
     }
 
     public function fetch(): ?array

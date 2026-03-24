@@ -91,9 +91,6 @@ class Hydrator
                         $prop->setValue($entity, $propValue);
                     }
                 }
-
-                // ManyToMany - optional: needs pivot logic
-                // TBD: implement when you handle pivot tables
             }
         }
     }

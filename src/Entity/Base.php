@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace ZQuery\Entity;
 
-use ReflectionClass;
-
 abstract class Base implements EntityInterface
 {
     protected array $attributes = [];

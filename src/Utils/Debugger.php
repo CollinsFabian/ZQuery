@@ -6,7 +6,7 @@ namespace ZQuery\Utils;
 
 class Debugger
 {
-    public static function dump(mixed $var): void
+    private static function dump(mixed $var): void
     {
         echo '<pre style="background:#222;color:#fff;padding:10px;">';
         var_dump($var);

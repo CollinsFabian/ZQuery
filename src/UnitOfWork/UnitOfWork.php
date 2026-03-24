@@ -1,9 +1,11 @@
 <?php
+
 declare(strict_types=1);
 
 namespace ZQuery\UnitOfWork;
 
 use ZQuery\Entity\EntityInterface;
+use ZQuery\Exceptions\UnitOfWorkException;
 use ZQuery\Mapper\DataMapperInterface;
 use Exception;
 
@@ -75,7 +77,7 @@ class UnitOfWork implements UnitOfWorkInterface
             $this->removedEntities = [];
         } catch (Exception $e) {
             $this->rollback();
-            throw $e;
+            throw new UnitOfWorkException($e->getMessage());
         }
     }
 
