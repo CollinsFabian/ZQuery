@@ -13,10 +13,10 @@ class IdentityMap
     public function add(EntityInterface $entity): void
     {
         $class = get_class($entity);
-        $pk = $entity->primaryKey();
-        $ref = new \ReflectionClass($entity);
-        $prop = $ref->getProperty($pk);
-        $id = $prop->getValue($entity);
+        $pk = $entity::primaryKey();
+        $data = $entity->toArray();
+        $id = $data[$pk] ?? null;
+        if ($id === null) return;
 
         $this->map[$class][$id] = $entity;
     }

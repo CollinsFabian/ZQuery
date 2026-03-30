@@ -19,6 +19,7 @@ class QueryBuilder
     private ?OrderByClause $orderBy = null;
     private ?LimitClause $limit = null;
     private array $insertData = [];
+    private array $updateData = [];
 
     private ConnectionInterface $connection;
     private GrammarInterface $grammar;
@@ -100,9 +101,29 @@ class QueryBuilder
         return $this;
     }
 
+    public function update(array $data): self
+    {
+        $this->updateData = $data;
+        return $this;
+    }
+
     public function executeInsert(): int
     {
         $compiled = $this->grammar->compileInsert($this);
+        $stmt = $this->connection->execute($compiled['sql'], $compiled['params']);
+        return $stmt->rowCount();
+    }
+
+    public function executeUpdate(): int
+    {
+        $compiled = $this->grammar->compileUpdate($this);
+        $stmt = $this->connection->execute($compiled['sql'], $compiled['params']);
+        return $stmt->rowCount();
+    }
+
+    public function executeDelete(): int
+    {
+        $compiled = $this->grammar->compileDelete($this);
         $stmt = $this->connection->execute($compiled['sql'], $compiled['params']);
         return $stmt->rowCount();
     }
@@ -150,6 +171,10 @@ class QueryBuilder
     public function getInsertData(): array
     {
         return $this->insertData;
+    }
+    public function getUpdateData(): array
+    {
+        return $this->updateData;
     }
     public function getBindings(): array
     {

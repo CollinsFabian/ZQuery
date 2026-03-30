@@ -16,10 +16,12 @@ class UnitOfWork implements UnitOfWorkInterface
     private array $removedEntities = [];
 
     private \PDO|\mysqli $connection;
+    private $mapperFactory;
 
-    public function __construct(\PDO|\mysqli $connection)
+    public function __construct(\PDO|\mysqli $connection, ?callable $mapperFactory = null)
     {
         $this->connection = $connection;
+        $this->mapperFactory = $mapperFactory;
     }
 
     public function registerNew(EntityInterface $entity): void
@@ -93,9 +95,13 @@ class UnitOfWork implements UnitOfWorkInterface
 
     private function getMapperFor(EntityInterface $entity): DataMapperInterface
     {
-        // naive: each entity class has a Mapper named <Entity>Mapper
-        $class = get_class($entity);
-        $mapperClass = str_replace('Entity', 'Mapper', $class);
-        return new $mapperClass(); // inject connection/grammar if needed
+        if ($this->mapperFactory !== null) {
+            $mapper = ($this->mapperFactory)($entity);
+            if ($mapper instanceof DataMapperInterface) {
+                return $mapper;
+            }
+        }
+
+        throw new UnitOfWorkException('No mapper factory configured for UnitOfWork.');
     }
 }

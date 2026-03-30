@@ -37,11 +37,19 @@ abstract class BaseRepository implements RepositoryInterface
 
     public function save(EntityInterface $entity): void
     {
-        $this->mapper->save($entity);
+        try {
+            $this->mapper->save($entity);
+        } catch (\Throwable $e) {
+            throw new RepositoryException(static::class, $e->getMessage());
+        }
     }
 
     public function delete(EntityInterface $entity): void
     {
-        $this->mapper->delete($entity);
+        try {
+            $this->mapper->delete($entity);
+        } catch (\Throwable $e) {
+            throw new RepositoryException(static::class, $e->getMessage());
+        }
     }
 }

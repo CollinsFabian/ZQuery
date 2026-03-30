@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ZQuery\Query\Grammar;
 
 use ZQuery\Query\QueryBuilder;
+use ZQuery\Query\RawExpression;
 
 class PostgresGrammar implements GrammarInterface
 {
@@ -15,32 +16,18 @@ class PostgresGrammar implements GrammarInterface
         $count = count($columns);
         for ($i = 0; $i < $count; $i++) {
             $col = $columns[$i];
-            $escapedColumns[] = $col === '*' ? '*' : $this->escapeIdentifier($col);
+            if ($col instanceof RawExpression) $escapedColumns[] = $col->get();
+            else $escapedColumns[] = $col === '*' ? '*' : $this->escapeIdentifier($col);
         }
 
         $sql = 'SELECT ' . implode(', ', $escapedColumns)
             . ' FROM ' . $this->escapeIdentifier($builder->getTable());
 
-        foreach ($builder->getJoins() as $join) {
-            $sql .= ' ' . $join->toSql();
-        }
-
-        if ($builder->hasWhere()) {
-            $sql .= ' WHERE ' . $builder->getWhere()->toSql();
-        }
-
-        if ($builder->hasGroupBy()) {
-            $sql .= ' GROUP BY ' . $builder->getGroupBy()->toSql();
-        }
-
-        if ($builder->hasHaving()) {
-            $sql .= ' HAVING ' . $builder->getHaving()->toSql();
-        }
-
-        if ($builder->hasOrderBy()) {
-            $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
-        }
-
+        foreach ($builder->getJoins() as $join) $sql .= ' ' . $join->toSql();
+        if ($builder->hasWhere()) $sql .= ' WHERE ' . $builder->getWhere()->toSql();
+        if ($builder->hasGroupBy()) $sql .= ' GROUP BY ' . $builder->getGroupBy()->toSql();
+        if ($builder->hasHaving()) $sql .= ' HAVING ' . $builder->getHaving()->toSql();
+        if ($builder->hasOrderBy()) $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
         if ($builder->hasLimit()) {
             $limitSql = $builder->getLimit()->toSql();
             $commaPos = strpos($limitSql, ',');
@@ -48,9 +35,7 @@ class PostgresGrammar implements GrammarInterface
                 $limit = trim(substr($limitSql, $commaPos + 1));
                 $offset = trim(substr($limitSql, 0, $commaPos));
                 $sql .= " LIMIT {$limit} OFFSET {$offset}";
-            } else {
-                $sql .= " LIMIT {$limitSql}";
-            }
+            } else $sql .= " LIMIT {$limitSql}";
         }
 
         return ['sql' => $sql, 'params' => $builder->getBindings()];
@@ -73,21 +58,22 @@ class PostgresGrammar implements GrammarInterface
     {
         if (!$builder->hasWhere()) throw new \RuntimeException('Unsafe UPDATE without WHERE clause.');
 
-        $data = $builder->getInsertData();
+        $data = $builder->getUpdateData();
+        if (empty($data)) throw new \RuntimeException('UPDATE requires at least one column.');
         $setParts = [];
         foreach ($data as $column => $_) {
             $setParts[] = $this->escapeIdentifier($column) . ' = ?';
         }
 
         $table = $this->escapeIdentifier($builder->getTable());
-        $sql = 'UPDATE ' . $table
-            . ' SET ' . implode(', ', $setParts)
-            . ' WHERE ' . $builder->getWhere()->toSql();
+        $sql = "UPDATE {$table}"
+            . " SET " . implode(', ', $setParts)
+            . " WHERE " . $builder->getWhere()->toSql();
 
         if ($builder->hasOrderBy() || $builder->hasLimit()) {
-            $cteSql = 'SELECT ctid FROM ' . $table . ' WHERE ' . $builder->getWhere()->toSql();
+            $cteSql = "SELECT ctid FROM {$table} WHERE " . $builder->getWhere()->toSql();
             if ($builder->hasOrderBy()) {
-                $cteSql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
+                $cteSql .= " ORDER BY " . $builder->getOrderBy()->toSql();
             }
             if ($builder->hasLimit()) {
                 $limitSql = $builder->getLimit()->toSql();
@@ -96,15 +82,13 @@ class PostgresGrammar implements GrammarInterface
                     $limit = trim(substr($limitSql, $commaPos + 1));
                     $offset = trim(substr($limitSql, 0, $commaPos));
                     $cteSql .= " LIMIT {$limit} OFFSET {$offset}";
-                } else {
-                    $cteSql .= " LIMIT {$limitSql}";
-                }
+                } else $cteSql .= " LIMIT {$limitSql}";
             }
 
-            $sql = 'WITH __zq_limit__ AS (' . $cteSql . ') '
-                . 'UPDATE ' . $table
-                . ' SET ' . implode(', ', $setParts)
-                . ' WHERE ctid IN (SELECT ctid FROM __zq_limit__)';
+            $sql = "WITH __zq_limit__ AS ('{$cteSql}') "
+                . "UPDATE {$table}"
+                . " SET " . implode(', ', $setParts)
+                . " WHERE ctid IN (SELECT ctid FROM __zq_limit__)";
         }
 
         $params = array_merge(array_values($data), $builder->getBindings());

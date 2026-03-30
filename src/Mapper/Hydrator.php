@@ -21,7 +21,7 @@ class Hydrator
         $result = [];
 
         foreach ($rows as $row) {
-            $pkProp = (new $class(null, null))->primaryKey();
+            $pkProp = $class::primaryKey();
             $id = $row[$pkProp] ?? null;
 
             if ($id === null) continue;
@@ -45,12 +45,21 @@ class Hydrator
         $ref = new ReflectionClass($class);
         $instance = $ref->newInstanceWithoutConstructor();
 
+        $data = [];
         foreach ($ref->getProperties() as $prop) {
+            if ($prop->isStatic()) continue;
             $colAttr = $prop->getAttributes(\ZQuery\Entity\Attributes\Column::class);
             $name = !empty($colAttr) ? $colAttr[0]->newInstance()->name : $prop->getName();
             if (array_key_exists($name, $row)) {
-                $prop->setValue($instance, $row[$name]);
+                $data[$name] = $row[$name];
+                if ($prop->isPublic()) {
+                    $prop->setValue($instance, $row[$name]);
+                }
             }
+        }
+
+        if (method_exists($instance, 'fill')) {
+            $instance->fill($data);
         }
 
         return $instance;
@@ -83,7 +92,7 @@ class Hydrator
                     $relatedClass = $instance->target;
                     $foreignKey = $instance->foreignKey;
 
-                    if (!isset($propValue)) $propValue = [];
+                    $propValue = $prop->getValue($entity) ?? [];
                     if (isset($row[$foreignKey])) {
                         $related = $this->identityMap->get($relatedClass, $row[$foreignKey])
                             ?? $this->mapRowToEntity([$foreignKey => $row[$foreignKey]], $relatedClass);

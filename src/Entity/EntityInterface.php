@@ -11,4 +11,6 @@ interface EntityInterface
     public static function primaryKey(): string;
 
     public function toArray(): array;
+
+    public function fill(array $data): void;
 }

@@ -5,38 +5,25 @@ declare(strict_types=1);
 namespace ZQuery\Query\Grammar;
 
 use ZQuery\Query\QueryBuilder;
+use ZQuery\Query\RawExpression;
 
 class MysqlGrammar implements GrammarInterface
 {
     public function compileSelect(QueryBuilder $builder): array
     {
         $columns = array_map(function ($col) {
+            if ($col instanceof RawExpression) return $col->get();
             return $col === '*' ? '*' : $this->escapeIdentifier($col);
         }, $builder->getColumns());
 
         $sql = 'SELECT ' . implode(', ', $columns)
             . ' FROM ' . $this->escapeIdentifier($builder->getTable());
 
-        foreach ($builder->getJoins() as $join) {
-            $sql .= ' ' . $join->toSql($this);
-        }
-
-        if ($builder->hasWhere()) {
-            $sql .= ' WHERE ' . $builder->getWhere()->toSql();
-        }
-
-        if ($builder->hasGroupBy()) {
-            $sql .= ' GROUP BY ' . $builder->getGroupBy()->toSql();
-        }
-
-        if ($builder->hasHaving()) {
-            $sql .= ' HAVING ' . $builder->getHaving()->toSql();
-        }
-
-        if ($builder->hasOrderBy()) {
-            $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
-        }
-
+        foreach ($builder->getJoins() as $join) $sql .= ' ' . $join->toSql();
+        if ($builder->hasWhere()) $sql .= ' WHERE ' . $builder->getWhere()->toSql();
+        if ($builder->hasGroupBy()) $sql .= ' GROUP BY ' . $builder->getGroupBy()->toSql();
+        if ($builder->hasHaving()) $sql .= ' HAVING ' . $builder->getHaving()->toSql();
+        if ($builder->hasOrderBy()) $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
         if ($builder->hasLimit()) {
             $limitSql = $builder->getLimit()->toSql();
             $commaPos = strpos($limitSql, ',');
@@ -67,15 +54,18 @@ class MysqlGrammar implements GrammarInterface
     {
         if (!$builder->hasWhere()) throw new \RuntimeException('Unsafe UPDATE without WHERE clause.');
 
-        $data = $builder->getInsertData();
+        $table = $this->escapeIdentifier($builder->getTable());
+
+        $data = $builder->getUpdateData();
+        if (empty($data)) throw new \RuntimeException('UPDATE requires at least one column.');
         $setParts = [];
         foreach ($data as $column => $_) {
             $setParts[] = $this->escapeIdentifier($column) . ' = ?';
         }
 
-        $sql = 'UPDATE ' . $this->escapeIdentifier($builder->getTable())
-            . ' SET ' . implode(', ', $setParts)
-            . ' WHERE ' . $builder->getWhere()->toSql();
+        $sql = "UPDATE {$table}"
+            . " SET " . implode(', ', $setParts)
+            . " WHERE " . $builder->getWhere()->toSql();
 
         if ($builder->hasOrderBy()) {
             $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
