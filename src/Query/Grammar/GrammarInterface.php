@@ -13,4 +13,5 @@ interface GrammarInterface
     public function compileUpdate(QueryBuilder $builder): array;
     public function compileDelete(QueryBuilder $builder): array;
     public function escapeIdentifier(string $identifier): string;
+    public function compileLimitOffset(string $limitSql): string;
 }

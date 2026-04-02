@@ -1,6 +1,8 @@
 # ZQuery Usage
 
-This document shows how to configure ZQuery, run queries, and use the mapper/repository/unit-of-work pieces.
+This is the extended usage guide for ZQuery.
+
+For the package overview and quick start, see [README.md](README.md).
 
 ## Install (Composer)
 
@@ -8,7 +10,7 @@ This document shows how to configure ZQuery, run queries, and use the mapper/rep
 composer require zi/zquery
 ```
 
-## Configure And Build A Query
+## Configure And Build Queries
 
 ### PDO
 ```php
@@ -34,6 +36,15 @@ $users = $zq->table('users')
     ->get();
 ```
 
+Returns:
+
+```php
+[
+    ['id' => 42, 'email' => 'ada@example.com'],
+    ['id' => 41, 'email' => 'grace@example.com'],
+]
+```
+
 ### MySQLi
 ```php
 use ZQuery\ZQuery;
@@ -51,6 +62,83 @@ $zq = new ZQuery([
 $rows = $zq->table('users')
     ->where([['status', '=', 'active'], ['role', '=', 'admin']])
     ->get();
+```
+
+Returns:
+
+```php
+[
+    [
+        'id' => 1,
+        'email' => 'admin@example.com',
+        'status' => 'active',
+        'role' => 'admin',
+    ],
+]
+```
+
+## Builder Helpers
+
+```php
+$user = $zq->table('users')
+    ->where('email', '=', 'a@example.com')
+    ->first();
+
+$activeCount = $zq->table('users')
+    ->where('status', '=', 'active')
+    ->count();
+
+$hasAdmins = $zq->table('users')
+    ->whereIn('role', ['admin', 'owner'])
+    ->exists();
+
+$emails = $zq->table('users')
+    ->where('status', '=', 'active')
+    ->pluck('email');
+```
+
+Returns:
+
+```php
+$user = [
+    'id' => 7,
+    'email' => 'a@example.com',
+    'status' => 'active',
+];
+
+$activeCount = 24;
+
+$hasAdmins = true;
+
+$emails = [
+    'a@example.com',
+    'b@example.com',
+    'c@example.com',
+];
+```
+
+## SQL Compilation
+
+The public builder API now exposes compilation directly when you want to inspect SQL before execution.
+
+```php
+$compiled = $zq->table('users')
+    ->where('users.status', '=', 'active')
+    ->latest('users.created_at')
+    ->limit(10)
+    ->compileSelect();
+
+$compiled['sql'];
+$compiled['params'];
+```
+
+Returns:
+
+```php
+$compiled = [
+    'sql' => 'SELECT * FROM `users` WHERE `users`.`status` = ? ORDER BY `users`.`created_at` DESC LIMIT 10',
+    'params' => ['active'],
+];
 ```
 
 ## Inserts, Updates, Deletes
@@ -73,6 +161,14 @@ $qb->where('id', '=', 10)
 $qb->where('id', '=', 10)->executeDelete();
 ```
 
+Returns:
+
+```php
+$inserted = 1; // affected rows
+$updated = 1;  // affected rows
+$deleted = 1;  // affected rows
+```
+
 ## Raw Expressions
 
 Use `RawExpression` to bypass identifier escaping for expressions.
@@ -89,100 +185,49 @@ $rows = $zq->table('orders')
     ->get();
 ```
 
-## Entities
-
-Create an entity that extends `ZQuery\Entity\Base`.
+Returns:
 
 ```php
-namespace App\Entity;
-
-use ZQuery\Entity\Base;
-use ZQuery\Entity\Attributes\Column;
-
-class User extends Base
-{
-    protected static string $table = 'users';
-    protected static string $primaryKey = 'id';
-
-    public int $id;
-
-    #[Column('email')]
-    public string $email;
-
-    public string $status;
-}
+[
+    ['user_id' => 1, 'total_orders' => 5],
+    ['user_id' => 2, 'total_orders' => 3],
+]
 ```
 
-## Mapper And Repository
+## Transactions And Raw Statements
 
 ```php
-namespace App\Mapper;
+$zq->transaction(function () {
+    $this->table('users')
+        ->where('id', '=', 10)
+        ->update(['status' => 'disabled'])
+        ->executeUpdate();
 
-use ZQuery\Mapper\BaseMapper;
-use App\Entity\User;
-
-class UserMapper extends BaseMapper
-{
-    protected string $entityClass = User::class;
-}
-```
-
-```php
-namespace App\Repository;
-
-use ZQuery\Repository\BaseRepository;
-use App\Mapper\UserMapper;
-
-class UserRepository extends BaseRepository
-{
-    public function __construct(UserMapper $mapper)
-    {
-        parent::__construct($mapper);
-    }
-}
-```
-
-### Usage
-```php
-use ZQuery\Mapper\IdentityMap;
-use App\Mapper\UserMapper;
-use App\Repository\UserRepository;
-
-$identityMap = new IdentityMap();
-$mapper = new UserMapper($zq->getConnection(), $zq->getGrammar(), $identityMap);
-$repo = new UserRepository($mapper);
-
-$user = $repo->find(1);
-$all = $repo->findAll();
-
-$user->fill(['status' => 'disabled']);
-$repo->save($user);
-
-$repo->delete($user);
-```
-
-## Unit Of Work
-
-`UnitOfWork` requires a mapper factory. The factory receives the entity and returns the correct mapper.
-
-```php
-use ZQuery\UnitOfWork\UnitOfWork;
-use ZQuery\Mapper\IdentityMap;
-use App\Mapper\UserMapper;
-
-$identityMap = new IdentityMap();
-
-$uow = new UnitOfWork($pdo, function ($entity) use ($zq, $identityMap) {
-    $class = get_class($entity);
-    return match ($class) {
-        \App\Entity\User::class => new UserMapper($zq->getConnection(), $zq->getGrammar(), $identityMap),
-        default => throw new \RuntimeException("No mapper for {$class}"),
-    };
+    $this->statement(
+        'INSERT INTO audit_logs (action, user_id) VALUES (?, ?)',
+        ['user.disabled', 10]
+    );
 });
+```
 
-$user = new \App\Entity\User(['email' => 'a@example.com', 'status' => 'active']);
-$uow->registerNew($user);
-$uow->commit();
+Returns:
+
+```php
+null
+```
+
+If you prefer, `transaction()` still accepts a callback parameter too:
+
+```php
+$zq->transaction(function (ZQuery $db) {
+    $db->table('users')->where('status', '=', 'active')->count();
+});
+```
+
+Returns:
+
+```php
+24
 ```
 
 ## Notes
@@ -190,3 +235,5 @@ $uow->commit();
 - `grammar` is optional; MySQL is the default.
 - `where()` always uses bound parameters to prevent SQL injection.
 - `update()` and `delete()` require a WHERE clause.
+- `toSql()`, `compileSelect()`, `compileInsert()`, `compileUpdate()`, and `compileDelete()` are available for inspection and testing.
+- ZQuery now ships as a query-builder-only package; entity mapping and repository abstractions were removed.

@@ -1,9 +1,9 @@
 {
     "name": "zi/zquery",
-    "description": "ZQuery is a lightweight PHP database query builder and ORM",
+    "description": "Focused fluent SQL query builder for PHP 8.2+",
+    "keywords": ["query-builder", "php", "database", "sql", "fluent-interface", "mysql", "postgresql", "transactions", "pdo", "mysqli"],
     "license": "proprietary",
     "type": "library",
-    "version": "0.1.2-alpha",
     "authors": [
         {
             "name": "CollinsFabian",
@@ -17,6 +17,14 @@
         "psr-4": {
             "ZQuery\\": "src/"
         }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "ZQuery\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "php tests/SqlCompilationTest.php"
     },
     "minimum-stability": "stable",
     "prefer-stable": true

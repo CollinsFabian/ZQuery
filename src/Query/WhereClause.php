@@ -4,25 +4,46 @@ declare(strict_types=1);
 
 namespace ZQuery\Query;
 
+use ZQuery\Query\Grammar\GrammarInterface;
+
 class WhereClause
 {
     private array $conditions = [];
-    private array $bindings = [];
 
-    public function add(string $column, string $operator, mixed $value): self
+    public function add(string $column, string $operator): self
     {
-        $this->conditions[] = "$column $operator ?";
-        $this->bindings[] = $value;
+        $this->conditions[] = [
+            'type' => 'basic',
+            'column' => $column,
+            'operator' => $operator,
+        ];
         return $this;
     }
 
-    public function toSql(): string
+    public function addRaw(string $sql): self
     {
-        return implode(' AND ', $this->conditions);
+        $this->conditions[] = [
+            'type' => 'raw',
+            'sql' => $sql,
+        ];
+        return $this;
     }
 
-    public function getBindings(): array
+    public function toSql(GrammarInterface $grammar): string
     {
-        return $this->bindings;
+        return implode(' AND ', array_map(
+            static function (array $condition) use ($grammar): string {
+                if ($condition['type'] === 'raw') {
+                    return $condition['sql'];
+                }
+
+                return sprintf(
+                    '%s %s ?',
+                    $grammar->escapeIdentifier($condition['column']),
+                    $condition['operator']
+                );
+            },
+            $this->conditions
+        ));
     }
 }

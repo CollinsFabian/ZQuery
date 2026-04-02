@@ -20,7 +20,7 @@ class JoinClause
     public string $type;
     private GrammarInterface $grammar;
 
-    public function __construct(string $table, string $first, string $operator, string $second, string $type = self::INNER, GrammarInterface $grammar)
+    public function __construct(string $table, string $first, string $operator, string $second, GrammarInterface $grammar, string $type = self::INNER)
     {
         $this->table = $table;
         $this->first = $first;

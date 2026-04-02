@@ -20,18 +20,12 @@ class MysqlGrammar implements GrammarInterface
             . ' FROM ' . $this->escapeIdentifier($builder->getTable());
 
         foreach ($builder->getJoins() as $join) $sql .= ' ' . $join->toSql();
-        if ($builder->hasWhere()) $sql .= ' WHERE ' . $builder->getWhere()->toSql();
-        if ($builder->hasGroupBy()) $sql .= ' GROUP BY ' . $builder->getGroupBy()->toSql();
-        if ($builder->hasHaving()) $sql .= ' HAVING ' . $builder->getHaving()->toSql();
-        if ($builder->hasOrderBy()) $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
+        if ($builder->hasWhere()) $sql .= ' WHERE ' . $builder->getWhere()->toSql($this);
+        if ($builder->hasGroupBy()) $sql .= ' GROUP BY ' . $builder->getGroupBy()->toSql($this);
+        if ($builder->hasHaving()) $sql .= ' HAVING ' . $builder->getHaving()->toSql($this);
+        if ($builder->hasOrderBy()) $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql($this);
         if ($builder->hasLimit()) {
-            $limitSql = $builder->getLimit()->toSql();
-            $commaPos = strpos($limitSql, ',');
-            if ($commaPos !== false) {
-                $limit = trim(substr($limitSql, $commaPos + 1));
-                $offset = trim(substr($limitSql, 0, $commaPos));
-                $sql .= " LIMIT {$limit} OFFSET {$offset}";
-            } else $sql .= " LIMIT {$limitSql}";
+            $sql .= $this->compileLimitOffset($builder->getLimit()->toSql());
         }
 
         return ['sql' => $sql, 'params' => $builder->getBindings()];
@@ -65,22 +59,14 @@ class MysqlGrammar implements GrammarInterface
 
         $sql = "UPDATE {$table}"
             . " SET " . implode(', ', $setParts)
-            . " WHERE " . $builder->getWhere()->toSql();
+            . " WHERE " . $builder->getWhere()->toSql($this);
 
         if ($builder->hasOrderBy()) {
-            $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
+            $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql($this);
         }
 
         if ($builder->hasLimit()) {
-            $limitSql = $builder->getLimit()->toSql();
-            $commaPos = strpos($limitSql, ',');
-            if ($commaPos !== false) {
-                $limit = trim(substr($limitSql, $commaPos + 1));
-                $offset = trim(substr($limitSql, 0, $commaPos));
-                $sql .= " LIMIT {$limit} OFFSET {$offset}";
-            } else {
-                $sql .= " LIMIT {$limitSql}";
-            }
+            $sql .= $this->compileLimitOffset($builder->getLimit()->toSql());
         }
 
         $params = array_merge(array_values($data), $builder->getBindings());
@@ -93,22 +79,14 @@ class MysqlGrammar implements GrammarInterface
         if (!$builder->hasWhere()) throw new \RuntimeException('Unsafe DELETE without WHERE clause.');
 
         $sql = 'DELETE FROM ' . $this->escapeIdentifier($builder->getTable())
-            . ' WHERE ' . $builder->getWhere()->toSql();
+            . ' WHERE ' . $builder->getWhere()->toSql($this);
 
         if ($builder->hasOrderBy()) {
-            $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql();
+            $sql .= ' ORDER BY ' . $builder->getOrderBy()->toSql($this);
         }
 
         if ($builder->hasLimit()) {
-            $limitSql = $builder->getLimit()->toSql();
-            $commaPos = strpos($limitSql, ',');
-            if ($commaPos !== false) {
-                $limit = trim(substr($limitSql, $commaPos + 1));
-                $offset = trim(substr($limitSql, 0, $commaPos));
-                $sql .= " LIMIT {$limit} OFFSET {$offset}";
-            } else {
-                $sql .= " LIMIT {$limitSql}";
-            }
+            $sql .= $this->compileLimitOffset($builder->getLimit()->toSql());
         }
 
         return ['sql' => $sql, 'params' => $builder->getBindings()];
@@ -116,6 +94,34 @@ class MysqlGrammar implements GrammarInterface
 
     public function escapeIdentifier(string $identifier): string
     {
-        return '`' . str_replace('`', '``', $identifier) . '`';
+        $trimmed = trim($identifier);
+
+        if ($trimmed === '*') {
+            return '*';
+        }
+
+        if (preg_match('/\s+as\s+/i', $trimmed) === 1) {
+            [$base, $alias] = preg_split('/\s+as\s+/i', $trimmed, 2);
+            return $this->escapeIdentifier($base) . ' AS ' . $this->escapeIdentifier($alias);
+        }
+
+        return implode('.', array_map(
+            static fn (string $segment): string => $segment === '*'
+                ? '*'
+                : '`' . str_replace('`', '``', trim($segment)) . '`',
+            explode('.', $trimmed)
+        ));
+    }
+
+    public function compileLimitOffset(string $limitSql): string
+    {
+        $commaPos = strpos($limitSql, ',');
+        if ($commaPos !== false) {
+            $limit = trim(substr($limitSql, $commaPos + 1));
+            $offset = trim(substr($limitSql, 0, $commaPos));
+            return " LIMIT {$limit} OFFSET {$offset}";
+        }
+
+        return " LIMIT {$limitSql}";
     }
 }
