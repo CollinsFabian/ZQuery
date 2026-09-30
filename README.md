@@ -22,13 +22,12 @@ composer require zi/zquery
 use ZQuery\ZQuery;
 use ZQuery\Query\Grammar\MysqlGrammar;
 
-$pdo = new PDO('mysql:host=127.0.0.1;dbname=app', 'user', 'pass', [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-]);
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+$mysqli = new mysqli('127.0.0.1', 'user', 'pass', 'app');
 
 $zq = new ZQuery([
-    'engine' => 'pdo',
-    'pdo' => $pdo,
+    'engine' => 'mysqli',
+    'mysqli' => $mysqli,
     'grammar' => new MysqlGrammar(),
 ]);
 
@@ -38,6 +37,16 @@ $users = $zq->table('users')
     ->latest('created_at')
     ->limit(10)
     ->get();
+```
+
+Prefer PDO? Pass `'engine' => 'pdo'` and `'pdo' => $pdo` instead:
+
+```php
+$pdo = new PDO('mysql:host=127.0.0.1;dbname=app', 'user', 'pass', [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+]);
+
+$zq = new ZQuery(['engine' => 'pdo', 'pdo' => $pdo, 'grammar' => new MysqlGrammar()]);
 ```
 
 Returns:
@@ -107,6 +116,8 @@ $zq->transaction(function () {
     );
 });
 ```
+
+Nested `transaction()` calls use savepoints, so an inner failure rolls back only the inner block.
 
 ## More Docs
 

@@ -15,7 +15,7 @@ class WhereClause
         $this->conditions[] = [
             'type' => 'basic',
             'column' => $column,
-            'operator' => $operator,
+            'operator' => Operator::normalize($operator),
         ];
         return $this;
     }

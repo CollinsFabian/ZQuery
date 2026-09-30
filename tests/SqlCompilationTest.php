@@ -90,4 +90,58 @@ run('Postgres delete compilation preserves ordering and limit', function (): voi
     assertSameValue(['debug'], $compiled['params'], 'Postgres delete bindings did not match.');
 });
 
+run('Bindings follow SQL order even when having() is called before where()', function (): void {
+    $compiled = builder(new MysqlGrammar(), 'orders')
+        ->groupBy('orders.user_id')
+        ->having('orders.total', '>', 100)
+        ->where('orders.status', '=', 'paid')
+        ->compileSelect();
+
+    assertSameValue(['paid', 100], $compiled['params'], 'Bindings were not in SQL order.');
+});
+
+run('Unsupported operators are rejected in where, having and join', function (): void {
+    $attempts = [
+        fn () => builder(new MysqlGrammar())->where('id', '= 1 OR 1=1 --', 5),
+        fn () => builder(new MysqlGrammar())->groupBy('id')->having('id', '; DROP TABLE users', 1),
+        fn () => builder(new MysqlGrammar())->join('posts', 'posts.user_id', 'OR 1=1', 'users.id'),
+    ];
+
+    foreach ($attempts as $attempt) {
+        $rejected = false;
+        try {
+            $attempt();
+        } catch (InvalidArgumentException) {
+            $rejected = true;
+        }
+        assertSameValue(true, $rejected, 'Malicious operator was not rejected.');
+    }
+});
+
+run('Operators are normalised and associative where() is supported', function (): void {
+    $compiled = builder(new MysqlGrammar())
+        ->where('name', ' like ', 'a%')
+        ->where(['status' => 'active', 'role' => 'admin'])
+        ->compileSelect();
+
+    assertSameValue(
+        'SELECT * FROM `users` WHERE `name` LIKE ? AND `status` = ? AND `role` = ?',
+        $compiled['sql'],
+        'Normalised operator / associative where SQL did not match.'
+    );
+    assertSameValue(['a%', 'active', 'admin'], $compiled['params'], 'Associative where bindings did not match.');
+});
+
+run('ZQuery rejects a missing or unknown engine', function (): void {
+    foreach ([[], ['engine' => 'sqlite'], ['engine' => 'mysqli']] as $config) {
+        $rejected = false;
+        try {
+            new ZQuery\ZQuery($config);
+        } catch (InvalidArgumentException) {
+            $rejected = true;
+        }
+        assertSameValue(true, $rejected, 'Invalid config was not rejected.');
+    }
+});
+
 echo PHP_EOL . 'SQL compilation tests passed.' . PHP_EOL;

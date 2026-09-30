@@ -17,12 +17,21 @@ class MysqliConnection implements ConnectionInterface
         $this->mysqli = $mysqli;
     }
 
+    private function handle(): mysqli
+    {
+        if ($this->mysqli === null) {
+            throw new ConnectionException('MySQL connection not established.');
+        }
+
+        return $this->mysqli;
+    }
+
     public function prepare(string $sql): StatementInterface
     {
-        if (!$this->mysqli) throw new ConnectionException("MYSQL connection not established.");
+        $mysqli = $this->handle();
 
-        $stmt = $this->mysqli->prepare($sql);
-        if (!$stmt) throw new QueryException($sql, [], $this->mysqli->error);
+        $stmt = $mysqli->prepare($sql);
+        if (!$stmt) throw new QueryException($sql, [], $mysqli->error);
 
         return new MysqliStatement($stmt);
     }
@@ -34,6 +43,8 @@ class MysqliConnection implements ConnectionInterface
             $stmt->bind($params);
             $stmt->execute();
             return $stmt;
+        } catch (QueryException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             throw new QueryException($sql, $params, $e->getMessage());
         }
@@ -41,26 +52,28 @@ class MysqliConnection implements ConnectionInterface
 
     public function beginTransaction(): void
     {
-        $this->mysqli->begin_transaction();
+        $this->handle()->begin_transaction();
     }
 
     public function commit(): void
     {
-        $this->mysqli->commit();
+        $this->handle()->commit();
     }
 
     public function rollBack(): void
     {
-        $this->mysqli->rollback();
+        $this->handle()->rollback();
     }
 
     public function lastInsertId(): string|int
     {
-        return $this->mysqli->insert_id;
+        return $this->handle()->insert_id;
     }
 
     public function isConnected(): bool
     {
+        if ($this->mysqli === null) return false;
+
         try {
             $this->mysqli->query("SELECT 1");
             return true;
@@ -71,6 +84,9 @@ class MysqliConnection implements ConnectionInterface
 
     public function close(): void
     {
+        if ($this->mysqli === null) return;
+
         $this->mysqli->close();
+        $this->mysqli = null;
     }
 }
