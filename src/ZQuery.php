@@ -15,6 +15,7 @@ class ZQuery
     protected ConnectionInterface $connection;
     protected GrammarInterface $grammar;
     protected string $prefix = '';
+    private int $transactionDepth = 0;
 
     /**
      * ZQuery
@@ -27,14 +28,23 @@ class ZQuery
      *  "prefix" => "DB_TABLES_PREFIX_" ?? "", // optional table prefix string, and connection params
      *  "engine" => "pdo|mysqli",
      *  "pdo|mysqli" => "", //instance of used class
-     *  "grammer" => interface GrammarInterface,
+     *  "grammar" => interface GrammarInterface,
      * ];
      * ```
      */
     public function __construct(array $config)
     {
         $this->prefix = $config['prefix'] ?? '';
-        $this->connection = strtolower($config['engine']) === 'pdo' ? new PdoConnection($config['pdo']) : new MysqliConnection($config['mysqli']);
+
+        $engine = strtolower((string) ($config['engine'] ?? ''));
+        if (!in_array($engine, ['pdo', 'mysqli'], true)) {
+            throw new \InvalidArgumentException("ZQuery config 'engine' must be 'pdo' or 'mysqli'.");
+        }
+        if (!isset($config[$engine])) {
+            throw new \InvalidArgumentException("ZQuery config is missing the '{$engine}' connection instance.");
+        }
+
+        $this->connection = $engine === 'pdo' ? new PdoConnection($config['pdo']) : new MysqliConnection($config['mysqli']);
 
         // Set grammar (default: MySQL)
         $this->grammar = $config['grammar'] ?? new MysqlGrammar();
@@ -61,15 +71,36 @@ class ZQuery
 
     public function transaction(callable $callback): mixed
     {
-        $this->connection->beginTransaction();
+        $depth = $this->transactionDepth;
+
+        // Outermost call opens a real transaction; nested calls use savepoints.
+        if ($depth === 0) {
+            $this->connection->beginTransaction();
+        } else {
+            $this->connection->execute("SAVEPOINT zq_sp_{$depth}");
+        }
+        $this->transactionDepth++;
 
         try {
             $result = $this->invokeTransactionCallback($callback);
-            $this->connection->commit();
+            $this->transactionDepth--;
+
+            if ($depth === 0) {
+                $this->connection->commit();
+            } else {
+                $this->connection->execute("RELEASE SAVEPOINT zq_sp_{$depth}");
+            }
 
             return $result;
         } catch (\Throwable $e) {
-            $this->connection->rollBack();
+            $this->transactionDepth = $depth;
+
+            if ($depth === 0) {
+                $this->connection->rollBack();
+            } else {
+                $this->connection->execute("ROLLBACK TO SAVEPOINT zq_sp_{$depth}");
+            }
+
             throw $e;
         }
     }

@@ -24,7 +24,7 @@ class JoinClause
     {
         $this->table = $table;
         $this->first = $first;
-        $this->operator = $operator;
+        $this->operator = Operator::normalize($operator);
         $this->second = $second;
         $this->type = $type;
         $this->grammar = $grammar;

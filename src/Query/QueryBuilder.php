@@ -11,7 +11,8 @@ class QueryBuilder
 {
     private string $table;
     private array $columns = ['*'];
-    private array $bindings = [];
+    private array $whereBindings = [];
+    private array $havingBindings = [];
     private array $joins = [];
     private ?WhereClause $where = null;
     private ?GroupByClause $groupBy = null;
@@ -92,14 +93,20 @@ class QueryBuilder
     {
         if ($this->where === null) $this->where = new WhereClause();
 
-        // if array of conditions: [['id', '=', 5], ['active', '=', 1]]
-        if (is_array($columnOrArray) && isset($columnOrArray[0]) && is_array($columnOrArray[0])) {
-            foreach ($columnOrArray as $cond) {
-                $this->where->add($cond[0], $cond[1]);
-                $this->addBinding([$cond[2]]);
+        if (is_array($columnOrArray)) {
+            foreach ($columnOrArray as $key => $cond) {
+                if (is_array($cond)) {
+                    // [['id', '=', 5], ['active', '=', 1]]
+                    $this->where->add($cond[0], $cond[1]);
+                    $this->addBinding([$cond[2]]);
+                } else {
+                    // ['status' => 'active', 'role' => 'admin']
+                    $this->where->add((string) $key, '=');
+                    $this->addBinding([$cond]);
+                }
             }
         } else {
-            $this->where->add($columnOrArray, $operator);
+            $this->where->add($columnOrArray, $operator ?? '=');
             $this->addBinding([$value]);
         }
 
@@ -130,7 +137,7 @@ class QueryBuilder
             $this->having = new HavingClause();
         }
         $this->having->add($column, $operator);
-        $this->addBinding([$value]);
+        $this->addBinding([$value], 'having');
         return $this;
     }
 
@@ -336,13 +343,22 @@ class QueryBuilder
     {
         return $this->updateData;
     }
+    /**
+     * Bindings in the order their placeholders appear in compiled SQL
+     * (WHERE first, then HAVING), regardless of fluent call order.
+     */
     public function getBindings(): array
     {
-        return $this->bindings;
+        return array_merge($this->whereBindings, $this->havingBindings);
     }
-    public function addBinding(array $params): void
+    public function addBinding(array $params, string $section = 'where'): void
     {
-        $this->bindings = array_merge($this->bindings, $params);
+        if ($section === 'having') {
+            $this->havingBindings = array_merge($this->havingBindings, $params);
+            return;
+        }
+
+        $this->whereBindings = array_merge($this->whereBindings, $params);
     }
     public function hasWhere(): bool
     {
