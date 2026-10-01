@@ -8,6 +8,24 @@ use ZQuery\Query\QueryBuilder;
 
 class MysqlGrammar extends AbstractGrammar
 {
+    public function compileUpsert(QueryBuilder $builder): array
+    {
+        [$parts, $params] = $this->upsertAssignments($builder, fn(string $column): string => "VALUES({$column})");
+
+        if ($parts === []) {
+            // Nothing to change: a no-op assignment keeps the statement valid and the row untouched
+            $first = $this->escapeIdentifier($builder->getUpsert()['conflict'][0]);
+            $parts[] = "{$first} = {$first}";
+        }
+
+        $insert = $this->compileInsert($builder);
+
+        return [
+            'sql' => $insert['sql'] . ' ON DUPLICATE KEY UPDATE ' . implode(', ', $parts),
+            'params' => array_merge($insert['params'], $params),
+        ];
+    }
+
     public function compileUpdate(QueryBuilder $builder): array
     {
         $this->requireWhere($builder, 'UPDATE');

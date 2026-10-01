@@ -93,6 +93,31 @@ $zq->table('users')->where('id', '=', 10)->executeDelete();                     
 
 Start each statement from a new `table()` call. A builder keeps its conditions, so reusing one carries earlier WHERE clauses into the next statement.
 
+## Upsert
+
+Insert rows, or update them when a unique key already exists.
+
+```php
+// Copies every non-key column when the row exists
+$zq->table('products')->upsert([
+    ['sku' => 'A1', 'name' => 'Apple', 'qty' => 5],
+    ['sku' => 'B2', 'name' => 'Berry', 'qty' => 4],
+], 'sku')->executeUpsert();
+
+// Choose what changes
+$zq->table('stock')->upsert(
+    ['sku' => 'A1', 'qty' => 10],
+    uniqueBy: ['sku'],
+    update: [
+        'qty',                               // copy the inserted value
+        'hits'    => $zq->raw('hits + 1'),   // raw SQL, used as written
+        'seen_at' => date('Y-m-d'),          // bound value
+    ]
+)->executeUpsert();
+```
+
+`uniqueBy` must be backed by a unique index. PostgreSQL uses it as the conflict target. MySQL reacts to any unique key, so there it documents intent. On MySQL, `executeUpsert()` returns 1 per inserted row, 2 per updated row and 0 per unchanged row.
+
 ## Transactions
 
 ```php
@@ -110,7 +135,7 @@ It commits when the callback returns and rolls back when it throws. Nested calls
 $row = $zq->statement('SELECT * FROM users WHERE email = ?', ['ada@example.com'])->fetch();
 ```
 
-Use this for anything the builder lacks: subqueries, `BETWEEN`, upserts, `UNION`.
+Use this for anything the builder lacks: subqueries, `BETWEEN`, `UNION`.
 
 ## Log Queries
 

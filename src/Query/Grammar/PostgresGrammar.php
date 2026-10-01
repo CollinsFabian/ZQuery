@@ -8,6 +8,20 @@ use ZQuery\Query\QueryBuilder;
 
 class PostgresGrammar extends AbstractGrammar
 {
+    public function compileUpsert(QueryBuilder $builder): array
+    {
+        [$parts, $params] = $this->upsertAssignments($builder, fn(string $column): string => "EXCLUDED.{$column}");
+
+        $target = implode(', ', array_map([$this, 'escapeIdentifier'], $builder->getUpsert()['conflict']));
+        $insert = $this->compileInsert($builder);
+
+        $conflict = $parts === []
+            ? " ON CONFLICT ({$target}) DO NOTHING"
+            : " ON CONFLICT ({$target}) DO UPDATE SET " . implode(', ', $parts);
+
+        return ['sql' => $insert['sql'] . $conflict, 'params' => array_merge($insert['params'], $params)];
+    }
+
     public function compileUpdate(QueryBuilder $builder): array
     {
         $this->requireWhere($builder, 'UPDATE');

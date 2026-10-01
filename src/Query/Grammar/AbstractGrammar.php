@@ -21,7 +21,7 @@ abstract class AbstractGrammar implements GrammarInterface
     public function compileSelect(QueryBuilder $builder): array
     {
         $columns = array_map(
-            fn ($column): string => $column instanceof RawExpression ? $column->get() : $this->escapeIdentifier($column),
+            fn($column): string => $column instanceof RawExpression ? $column->get() : $this->escapeIdentifier($column),
             $builder->getColumns()
         );
 
@@ -55,6 +55,38 @@ abstract class AbstractGrammar implements GrammarInterface
         return ['sql' => $sql, 'params' => array_merge(...$rows)];
     }
 
+    /**
+     * @param callable(string): string $copyExpression Turns an escaped column into the dialect's "value being inserted" expression.
+     * @return array{0: string[], 1: array} Assignments and their bound params.
+     */
+    protected function upsertAssignments(QueryBuilder $builder, callable $copyExpression): array
+    {
+        $upsert = $builder->getUpsert();
+        if ($upsert === null) {
+            throw new \RuntimeException('UPSERT requires data; call upsert() first.');
+        }
+
+        $parts = [];
+        $params = [];
+
+        foreach ($upsert['copy'] as $column) {
+            $escaped = $this->escapeIdentifier($column);
+            $parts[] = "{$escaped} = " . $copyExpression($escaped);
+        }
+
+        foreach ($upsert['set'] as $column => $value) {
+            $escaped = $this->escapeIdentifier((string) $column);
+            if ($value instanceof RawExpression) {
+                $parts[] = "{$escaped} = " . $value->get();
+            } else {
+                $parts[] = "{$escaped} = ?";
+                $params[] = $value;
+            }
+        }
+
+        return [$parts, $params];
+    }
+
     public function escapeIdentifier(string $identifier): string
     {
         $trimmed = trim($identifier);
@@ -69,7 +101,7 @@ abstract class AbstractGrammar implements GrammarInterface
         }
 
         return implode('.', array_map(
-            fn (string $segment): string => $segment === '*' ? '*' : $this->quoteSegment(trim($segment)),
+            fn(string $segment): string => $segment === '*' ? '*' : $this->quoteSegment(trim($segment)),
             explode('.', $trimmed)
         ));
     }
@@ -108,7 +140,7 @@ abstract class AbstractGrammar implements GrammarInterface
         }
 
         return implode(', ', array_map(
-            fn (string $column): string => $this->escapeIdentifier($column) . ' = ?',
+            fn(string $column): string => $this->escapeIdentifier($column) . ' = ?',
             array_keys($data)
         ));
     }

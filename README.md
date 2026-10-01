@@ -50,6 +50,7 @@ $user   = $zq->table('users')->where('email', '=', 'a@example.com')->first();   
 $count  = $zq->table('users')->where('status', '=', 'active')->count();         // int
 $emails = $zq->table('users')->where('status', '=', 'active')->pluck('email');  // list
 $id     = $zq->table('users')->insert(['email' => 'new@example.com'])->insertGetId();
+$zq->table('products')->upsert(['sku' => 'A1', 'qty' => 5], 'sku')->executeUpsert();   // insert or update
 ```
 
 ## Transactions

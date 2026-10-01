@@ -15,6 +15,9 @@ interface GrammarInterface
     public function compileInsert(QueryBuilder $builder): array;
 
     /** @return array{sql: string, params: array} */
+    public function compileUpsert(QueryBuilder $builder): array;
+
+    /** @return array{sql: string, params: array} */
     public function compileUpdate(QueryBuilder $builder): array;
 
     /** @return array{sql: string, params: array} */

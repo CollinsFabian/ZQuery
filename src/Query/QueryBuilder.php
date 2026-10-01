@@ -23,6 +23,8 @@ class QueryBuilder
     private ?LimitClause $limit = null;
     private array $insertColumns = [];
     private array $insertRows = [];
+    /** @var array{conflict: string[], copy: string[], set: array<string, mixed>}|null */
+    private ?array $upsert = null;
     private array $updateData = [];
 
     private ConnectionInterface $connection;
@@ -231,6 +233,8 @@ class QueryBuilder
      */
     public function insert(array $data): self
     {
+        $this->upsert = null;
+
         $rows = array_is_list($data) && is_array($data[0] ?? null) ? $data : [$data];
 
         $columns = array_keys($rows[0]);
@@ -250,11 +254,56 @@ class QueryBuilder
                 throw new InvalidArgumentException("insert() row {$i} does not have the same columns as row 0.");
             }
 
-            $values[] = array_map(static fn (string|int $column): mixed => $row[$column], $columns);
+            $values[] = array_map(static fn(string|int $column): mixed => $row[$column], $columns);
         }
 
         $this->insertColumns = $columns;
         $this->insertRows = $values;
+
+        return $this;
+    }
+
+    /**
+     * Insert rows, or update them when a unique key already exists. Takes the same row data as
+     * insert(). Run with executeUpsert().
+     *
+     * @param string|array<int, string> $uniqueBy Column(s) that identify an existing row.
+     * @param array<int|string, mixed>|null $update A list of column names copies the inserted value,
+     *        `column => value` sets a bound value, `column => RawExpression` sets raw SQL.
+     *        Omitted, every inserted column except $uniqueBy is copied.
+     * @throws InvalidArgumentException On empty or mismatched data, or unknown columns.
+     */
+    public function upsert(array $data, string|array $uniqueBy, ?array $update = null): self
+    {
+        $this->insert($data);
+
+        $conflict = array_values((array) $uniqueBy);
+        if ($conflict === []) {
+            throw new InvalidArgumentException('upsert() requires at least one unique column.');
+        }
+        foreach ($conflict as $column) {
+            if (!in_array($column, $this->insertColumns, true)) {
+                throw new InvalidArgumentException("upsert() unique column '{$column}' is not in the inserted data.");
+            }
+        }
+
+        $copy = [];
+        $set = [];
+        if ($update === null) {
+            $copy = array_values(array_diff($this->insertColumns, $conflict));
+        } else {
+            foreach ($update as $key => $value) {
+                if (!is_int($key)) {
+                    $set[$key] = $value;
+                } elseif (is_string($value) && in_array($value, $this->insertColumns, true)) {
+                    $copy[] = $value;
+                } else {
+                    throw new InvalidArgumentException('upsert() update list entries must be inserted column names.');
+                }
+            }
+        }
+
+        $this->upsert = ['conflict' => $conflict, 'copy' => $copy, 'set' => $set];
 
         return $this;
     }
@@ -293,6 +342,12 @@ class QueryBuilder
     }
 
     /** @return array{sql: string, params: array} */
+    public function compileUpsert(): array
+    {
+        return $this->grammar->compileUpsert($this);
+    }
+
+    /** @return array{sql: string, params: array} */
     public function compileUpdate(): array
     {
         return $this->grammar->compileUpdate($this);
@@ -314,6 +369,14 @@ class QueryBuilder
     public function executeInsert(): int
     {
         return $this->run($this->compileInsert())->rowCount();
+    }
+
+    /**
+     * @return int Affected rows (MySQL: 1 per insert, 2 per update, 0 unchanged; PostgreSQL: 1 each).
+     */
+    public function executeUpsert(): int
+    {
+        return $this->run($this->compileUpsert())->rowCount();
     }
 
     /**
@@ -440,7 +503,7 @@ class QueryBuilder
     public function pluck(string $column): array
     {
         return array_map(
-            static fn (array $row): mixed => $row[$column] ?? array_values($row)[0] ?? null,
+            static fn(array $row): mixed => $row[$column] ?? array_values($row)[0] ?? null,
             $this->get([$column])
         );
     }
@@ -506,6 +569,13 @@ class QueryBuilder
         return $this->insertRows;
     }
 
+
+    /** @return array{conflict: string[], copy: string[], set: array<string, mixed>}|null */
+    public function getUpsert(): ?array
+    {
+        return $this->upsert;
+    }
+
     /**
      * First pending INSERT row as `column => value`.
      *
@@ -568,7 +638,7 @@ class QueryBuilder
         if (is_array($column)) {
             // An OR-ed array is one group, so its members stay AND-ed together
             if ($boolean === WhereClause::OR) {
-                return $this->addWhereGroup($boolean, static fn (self $group) => $group->where($column));
+                return $this->addWhereGroup($boolean, static fn(self $group) => $group->where($column));
             }
 
             foreach ($column as $key => $condition) {

@@ -136,6 +136,12 @@ These methods leave the builder unchanged, so you can reuse it.
 | `update(array $data)` | Set `column => value` pairs. |
 | `executeUpdate(): int` | Run the update on rows matched by `where()`. Returns affected rows. |
 | `executeDelete(): int` | Delete rows matched by `where()`. Returns affected rows. |
+| `upsert(array $data, string\|array $uniqueBy, ?array $update = null)` | Like `insert()`, but updates the row when a unique key exists. |
+| `executeUpsert(): int` | Run the upsert. Returns affected rows. |
+
+- `upsert()` takes one row or a list of rows. `$uniqueBy` names the unique column(s). `$update` is a list of columns to copy from the inserted row (`['qty']`), `column => value` pairs to set (`['seen_at' => $now]`), or `column => $zq->raw('...')` for raw SQL (`['hits' => $zq->raw('hits + 1')]`). Left out, every inserted column except `$uniqueBy` is copied.
+- On MySQL, `executeUpsert()` counts 1 per inserted row, 2 per updated row and 0 per unchanged row. PostgreSQL counts each inserted or updated row once.
+- `compileUpsert()` returns the SQL and params without running anything.
 
 ```php
 $zq->table('users')->insert([
@@ -205,7 +211,7 @@ Every statement is logged, including failed ones. Parameters are not masked, so 
 
 ## Limits
 
-- No subqueries, `UNION`, `BETWEEN` or upserts. Use `statement()`.
+- No subqueries, `UNION`, or `BETWEEN`. Use `statement()`.
 - `having()` supports AND only.
 - The table prefix applies to names passed to `table()`, not to joined tables or raw SQL.
 - `getConnection()->lastInsertId()` returns `0` after any later query. Use `insertGetId()` to avoid this.
