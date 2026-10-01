@@ -70,7 +70,7 @@ run('Postgres update compilation uses cte without quoting the inner query', func
         'Postgres update SQL did not match.'
     );
 
-    assertSameValue(['archived', 100], $compiled['params'], 'Postgres update bindings did not match.');
+    assertSameValue([100, 'archived'], $compiled['params'], 'Postgres update bindings must follow SQL order (CTE WHERE first, then SET).');
 });
 
 run('Postgres delete compilation preserves ordering and limit', function (): void {
@@ -132,16 +132,231 @@ run('Operators are normalised and associative where() is supported', function ()
     assertSameValue(['a%', 'active', 'admin'], $compiled['params'], 'Associative where bindings did not match.');
 });
 
-run('ZQuery rejects a missing or unknown engine', function (): void {
-    foreach ([[], ['engine' => 'sqlite'], ['engine' => 'mysqli']] as $config) {
-        $rejected = false;
-        try {
-            new ZQuery\ZQuery($config);
-        } catch (InvalidArgumentException) {
-            $rejected = true;
-        }
-        assertSameValue(true, $rejected, 'Invalid config was not rejected.');
+run('ZQuery infers the engine from the connection it receives', function (): void {
+    $pdo = new ZQuery\ZQuery(new PDO('sqlite::memory:'));
+    assertSameValue(true, $pdo->getConnection() instanceof ZQuery\Connection\PdoConnection, 'PDO should use PdoConnection.');
+
+    $custom = new NullConnection();
+    $zq = new ZQuery\ZQuery($custom, new PostgresGrammar(), 'app_');
+    assertSameValue($custom, $zq->getConnection(), 'A ConnectionInterface should be used as is.');
+    assertSameValue(true, $zq->getGrammar() instanceof PostgresGrammar, 'Grammar argument should be used.');
+
+    $zq->table('users')->where('id', '=', 1)->first();
+    assertSameValue('SELECT * FROM "app_users" WHERE "id" = ? LIMIT 1', $custom->executed[0], 'Prefix should apply to table().');
+});
+
+run('first() and get() do not mutate the builder', function (): void {
+    $connection = new NullConnection();
+    $query = new QueryBuilder('users', $connection, new MysqlGrammar());
+    $query->where('status', '=', 'active');
+
+    $query->first();
+    $query->get();
+
+    assertSameValue('SELECT * FROM `users` WHERE `status` = ? LIMIT 1', $connection->executed[0], 'first() SQL did not match.');
+    assertSameValue('SELECT * FROM `users` WHERE `status` = ?', $connection->executed[1], 'get() inherited first()\'s LIMIT.');
+});
+
+run('count() compiles an aggregate and ignores ORDER BY and LIMIT', function (): void {
+    $connection = new NullConnection();
+    (new QueryBuilder('users', $connection, new MysqlGrammar()))
+        ->where('status', '=', 'active')
+        ->orderBy('id')
+        ->limit(5, 10)
+        ->count();
+
+    assertSameValue(
+        'SELECT COUNT(*) AS aggregate FROM `users` WHERE `status` = ? LIMIT 1',
+        $connection->executed[0],
+        'count() SQL did not match.'
+    );
+});
+
+run('exists() selects a constant instead of every column', function (): void {
+    $connection = new NullConnection();
+    (new QueryBuilder('users', $connection, new MysqlGrammar()))->whereNull('deleted_at')->exists();
+
+    assertSameValue('SELECT 1 FROM `users` WHERE `deleted_at` IS NULL LIMIT 1', $connection->executed[0], 'exists() SQL did not match.');
+});
+
+run('Clones are independent of the original builder', function (): void {
+    $original = builder(new MysqlGrammar())->where('a', '=', 1);
+    $copy = (clone $original)->where('b', '=', 2);
+
+    assertSameValue(['a' => 1], ['a' => $original->compileSelect()['params'][0]], 'Original lost its binding.');
+    assertSameValue(1, count($original->compileSelect()['params']), 'Clone leaked a binding into the original.');
+    assertSameValue([1, 2], $copy->compileSelect()['params'], 'Clone bindings did not match.');
+});
+
+run('Unsupported join types are rejected', function (): void {
+    $rejected = false;
+    try {
+        builder(new MysqlGrammar())->join('posts', 'posts.user_id', '=', 'users.id', 'INNER JOIN evil ON 1=1 --');
+    } catch (InvalidArgumentException) {
+        $rejected = true;
     }
+    assertSameValue(true, $rejected, 'Malicious join type was not rejected.');
+});
+
+function expectInvalid(callable $fn, string $message): void
+{
+    try {
+        $fn();
+    } catch (InvalidArgumentException) {
+        return;
+    }
+    throw new RuntimeException($message);
+}
+
+run('orWhere joins with OR and keeps bindings in SQL order', function (): void {
+    $compiled = builder(new MysqlGrammar())
+        ->where('status', '=', 'active')
+        ->orWhere('role', '=', 'admin')
+        ->orWhereIn('id', [1, 2])
+        ->orWhereNull('deleted_at')
+        ->compileSelect();
+
+    assertSameValue(
+        'SELECT * FROM `users` WHERE `status` = ? OR `role` = ? OR `id` IN (?, ?) OR `deleted_at` IS NULL',
+        $compiled['sql'],
+        'orWhere SQL did not match.'
+    );
+    assertSameValue(['active', 'admin', 1, 2], $compiled['params'], 'orWhere bindings did not match.');
+});
+
+run('Closures create parenthesised groups', function (): void {
+    $compiled = builder(new MysqlGrammar())
+        ->where('tenant_id', '=', 7)
+        ->where(fn (QueryBuilder $q) => $q->where('role', '=', 'admin')->orWhere('role', '=', 'owner'))
+        ->orWhere(fn (QueryBuilder $q) => $q->where('vip', '=', 1)->where('age', '>', 30))
+        ->where(fn (QueryBuilder $q) => null)
+        ->compileSelect();
+
+    assertSameValue(
+        'SELECT * FROM `users` WHERE `tenant_id` = ? AND (`role` = ? OR `role` = ?) OR (`vip` = ? AND `age` > ?)',
+        $compiled['sql'],
+        'Grouped where SQL did not match.'
+    );
+    assertSameValue([7, 'admin', 'owner', 1, 30], $compiled['params'], 'Grouped where bindings did not match.');
+});
+
+run('orWhere with an array becomes one AND-ed group', function (): void {
+    $compiled = builder(new MysqlGrammar())
+        ->where('a', '=', 1)
+        ->orWhere(['b' => 2, 'c' => 3])
+        ->compileSelect();
+
+    assertSameValue('SELECT * FROM `users` WHERE `a` = ? OR (`b` = ? AND `c` = ?)', $compiled['sql'], 'orWhere array SQL did not match.');
+    assertSameValue([1, 2, 3], $compiled['params'], 'orWhere array bindings did not match.');
+});
+
+run('Groups work in UPDATE and DELETE and bind in order', function (): void {
+    $update = builder(new MysqlGrammar())
+        ->where(fn (QueryBuilder $q) => $q->where('a', '=', 1)->orWhere('b', '=', 2))
+        ->update(['x' => 9])
+        ->compileUpdate();
+
+    assertSameValue('UPDATE `users` SET `x` = ? WHERE (`a` = ? OR `b` = ?)', $update['sql'], 'Grouped update SQL did not match.');
+    assertSameValue([9, 1, 2], $update['params'], 'Grouped update bindings did not match.');
+});
+
+run('Malformed where conditions are rejected', function (): void {
+    expectInvalid(fn () => builder(new MysqlGrammar())->where([['id', '=']]), 'Short condition array accepted.');
+    expectInvalid(fn () => builder(new MysqlGrammar())->orWhere('id', 'DROP', 1), 'Bad operator accepted in orWhere.');
+    expectInvalid(fn () => builder(new MysqlGrammar())->where(fn (QueryBuilder $q) => $q->where('id', 'x', 1)), 'Bad operator accepted in group.');
+});
+
+run('Bulk insert compiles one multi-row statement', function (): void {
+    $compiled = builder(new MysqlGrammar())
+        ->insert([
+            ['email' => 'a@x.com', 'name' => 'A'],
+            ['name' => 'B', 'email' => 'b@x.com'],
+        ])
+        ->compileInsert();
+
+    assertSameValue('INSERT INTO `users` (`email`, `name`) VALUES (?, ?), (?, ?)', $compiled['sql'], 'Bulk insert SQL did not match.');
+    assertSameValue(['a@x.com', 'A', 'b@x.com', 'B'], $compiled['params'], 'Bulk insert params follow the first row column order.');
+
+    $single = builder(new PostgresGrammar())->insert(['email' => 'a@x.com'])->compileInsert();
+    assertSameValue('INSERT INTO "users" ("email") VALUES (?)', $single['sql'], 'Single-row insert SQL did not match.');
+});
+
+run('Bulk insert validates its rows', function (): void {
+    expectInvalid(fn () => builder(new MysqlGrammar())->insert([]), 'Empty insert accepted.');
+    expectInvalid(fn () => builder(new MysqlGrammar())->insert([['a' => 1], ['b' => 2]]), 'Mismatched rows accepted.');
+    expectInvalid(fn () => builder(new MysqlGrammar())->insert([['a' => 1], ['a' => 1, 'b' => 2]]), 'Extra column accepted.');
+
+    $threw = false;
+    try {
+        builder(new MysqlGrammar())->compileInsert();
+    } catch (RuntimeException) {
+        $threw = true;
+    }
+    assertSameValue(true, $threw, 'compileInsert() without data should throw.');
+});
+
+run('insertGetId returns an int id and rejects multi-row inserts', function (): void {
+    $connection = new NullConnection();
+    $connection->lastId = '42';
+    $id = (new QueryBuilder('users', $connection, new MysqlGrammar()))->insert(['name' => 'A'])->insertGetId();
+    assertSameValue(42, $id, 'Numeric id should be returned as int.');
+
+    $connection->lastId = 'abc-uuid';
+    $id = (new QueryBuilder('users', $connection, new MysqlGrammar()))->insert(['name' => 'A'])->insertGetId();
+    assertSameValue('abc-uuid', $id, 'Non-numeric id should stay a string.');
+
+    $threw = false;
+    try {
+        (new QueryBuilder('users', $connection, new MysqlGrammar()))->insert([['name' => 'A'], ['name' => 'B']])->insertGetId();
+    } catch (LogicException) {
+        $threw = true;
+    }
+    assertSameValue(true, $threw, 'insertGetId() with several rows should throw.');
+});
+
+run('Limit and offset compile through the grammar', function (): void {
+    foreach ([new MysqlGrammar(), new PostgresGrammar()] as $grammar) {
+        assertSameValue(' LIMIT 10', $grammar->compileLimitOffset(10, null), 'Limit without offset.');
+        assertSameValue(' LIMIT 10 OFFSET 20', $grammar->compileLimitOffset(10, 20), 'Limit with offset.');
+    }
+
+    $compiled = builder(new MysqlGrammar())->limit(5, 15)->compileSelect();
+    assertSameValue('SELECT * FROM `users` LIMIT 5 OFFSET 15', $compiled['sql'], 'Select limit/offset SQL did not match.');
+});
+
+run('Logging connection reports sql, params and duration, even on failure', function (): void {
+    $log = [];
+    $inner = new NullConnection();
+    $connection = new ZQuery\Connection\LoggingConnection($inner, function (string $sql, array $params, float $ms) use (&$log): void {
+        $log[] = [$sql, $params, $ms];
+    });
+
+    (new QueryBuilder('users', $connection, new MysqlGrammar()))->where('id', '=', 1)->first();
+
+    assertSameValue('SELECT * FROM `users` WHERE `id` = ? LIMIT 1', $log[0][0], 'Logged SQL did not match.');
+    assertSameValue([1], $log[0][1], 'Logged params did not match.');
+    assertSameValue(true, $log[0][2] >= 0.0, 'Duration should be a non-negative float.');
+
+    ZQuery\Utils\QueryLogger::clear();
+    $zq = new ZQuery\ZQuery(new PDO('sqlite::memory:'), log: true);
+    $zq->statement('SELECT 1');
+    $entries = ZQuery\Utils\QueryLogger::all();
+    assertSameValue('SELECT 1', $entries[0]['query'], 'log => true should feed QueryLogger.');
+    // A failing statement is still logged
+    try {
+        $zq->statement('SELECT * FROM table_that_does_not_exist');
+    } catch (ZQuery\Exceptions\QueryException) {
+    }
+    assertSameValue(2, count(ZQuery\Utils\QueryLogger::all()), 'Failed statement should still be logged.');
+    ZQuery\Utils\QueryLogger::clear();
+
+    $rejected = false;
+    try {
+        new ZQuery\ZQuery(new PDO('sqlite::memory:'), log: 'nope-not-callable');
+    } catch (TypeError) {
+        $rejected = true;
+    }
+    assertSameValue(true, $rejected, 'A non-callable log option should be rejected.');
 });
 
 echo PHP_EOL . 'SQL compilation tests passed.' . PHP_EOL;

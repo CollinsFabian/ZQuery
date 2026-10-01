@@ -8,10 +8,22 @@ use ZQuery\Query\QueryBuilder;
 
 interface GrammarInterface
 {
-    public function compileSelect(QueryBuilder $builder): array; // ['sql' => string, 'params' => array]
+    /** @return array{sql: string, params: array} */
+    public function compileSelect(QueryBuilder $builder): array;
+
+    /** @return array{sql: string, params: array} */
     public function compileInsert(QueryBuilder $builder): array;
+
+    /** @return array{sql: string, params: array} */
     public function compileUpdate(QueryBuilder $builder): array;
+
+    /** @return array{sql: string, params: array} */
     public function compileDelete(QueryBuilder $builder): array;
+
     public function escapeIdentifier(string $identifier): string;
-    public function compileLimitOffset(string $limitSql): string;
+
+    /**
+     * @return string The dialect's limit clause with a leading space, e.g. " LIMIT 10 OFFSET 20".
+     */
+    public function compileLimitOffset(int $limit, ?int $offset): string;
 }

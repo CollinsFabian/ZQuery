@@ -5,33 +5,21 @@ declare(strict_types=1);
 namespace ZQuery\Connection;
 
 use mysqli;
-use ZQuery\Exceptions\ConnectionException;
 use ZQuery\Exceptions\QueryException;
 
 class MysqliConnection implements ConnectionInterface
 {
-    private ?mysqli $mysqli;
+    private mysqli $mysqli;
 
     public function __construct(mysqli $mysqli)
     {
         $this->mysqli = $mysqli;
     }
 
-    private function handle(): mysqli
-    {
-        if ($this->mysqli === null) {
-            throw new ConnectionException('MySQL connection not established.');
-        }
-
-        return $this->mysqli;
-    }
-
     public function prepare(string $sql): StatementInterface
     {
-        $mysqli = $this->handle();
-
-        $stmt = $mysqli->prepare($sql);
-        if (!$stmt) throw new QueryException($sql, [], $mysqli->error);
+        $stmt = $this->mysqli->prepare($sql);
+        if (!$stmt) throw new QueryException($sql, [], $this->mysqli->error);
 
         return new MysqliStatement($stmt);
     }
@@ -52,41 +40,31 @@ class MysqliConnection implements ConnectionInterface
 
     public function beginTransaction(): void
     {
-        $this->handle()->begin_transaction();
+        $this->mysqli->begin_transaction();
     }
 
     public function commit(): void
     {
-        $this->handle()->commit();
+        $this->mysqli->commit();
     }
 
     public function rollBack(): void
     {
-        $this->handle()->rollback();
+        $this->mysqli->rollback();
     }
 
     public function lastInsertId(): string|int
     {
-        return $this->handle()->insert_id;
+        return $this->mysqli->insert_id;
     }
 
     public function isConnected(): bool
     {
-        if ($this->mysqli === null) return false;
-
         try {
-            $this->mysqli->query("SELECT 1");
+            $this->mysqli->query('SELECT 1');
             return true;
-        } catch (\mysqli_sql_exception) {
+        } catch (\Throwable) {
             return false;
         }
-    }
-
-    public function close(): void
-    {
-        if ($this->mysqli === null) return;
-
-        $this->mysqli->close();
-        $this->mysqli = null;
     }
 }

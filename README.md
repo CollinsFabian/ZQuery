@@ -1,14 +1,12 @@
 # ZQuery
 
-ZQuery is a focused fluent SQL query builder for PHP 8.2+.
+A fluent SQL query builder for PHP 8.2 or newer.
 
-It gives you a lightweight database layer with:
-
-- fluent `select`, `insert`, `update`, and `delete` queries
-- PDO and MySQLi support
-- MySQL and PostgreSQL grammar support
-- transaction helpers
-- SQL compilation helpers for testing and debugging
+- Fluent `select`, `insert`, `update` and `delete`
+- mysqli and PDO
+- MySQL/MariaDB and PostgreSQL
+- Transactions with nesting
+- SQL compilation for tests and debugging
 
 ## Install
 
@@ -20,16 +18,9 @@ composer require zi/zquery
 
 ```php
 use ZQuery\ZQuery;
-use ZQuery\Query\Grammar\MysqlGrammar;
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-$mysqli = new mysqli('127.0.0.1', 'user', 'pass', 'app');
-
-$zq = new ZQuery([
-    'engine' => 'mysqli',
-    'mysqli' => $mysqli,
-    'grammar' => new MysqlGrammar(),
-]);
+$zq = new ZQuery(new mysqli('127.0.0.1', 'user', 'pass', 'app'));
 
 $users = $zq->table('users')
     ->select(['id', 'email'])
@@ -37,88 +28,42 @@ $users = $zq->table('users')
     ->latest('created_at')
     ->limit(10)
     ->get();
+// [['id' => 42, 'email' => 'ada@example.com'], ...]
 ```
 
-Prefer PDO? Pass `'engine' => 'pdo'` and `'pdo' => $pdo` instead:
+Using PDO instead:
 
 ```php
 $pdo = new PDO('mysql:host=127.0.0.1;dbname=app', 'user', 'pass', [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
 ]);
 
-$zq = new ZQuery(['engine' => 'pdo', 'pdo' => $pdo, 'grammar' => new MysqlGrammar()]);
+$zq = new ZQuery($pdo);
 ```
 
-Returns:
-
-```php
-[
-    ['id' => 42, 'email' => 'ada@example.com'],
-    ['id' => 41, 'email' => 'grace@example.com'],
-]
-```
+ZQuery detects the engine from the object you pass. For PostgreSQL, pass the grammar as the second argument: `new ZQuery($pdo, new \ZQuery\Query\Grammar\PostgresGrammar())`.
 
 ## Common Helpers
 
 ```php
-$user = $zq->table('users')
-    ->where('email', '=', 'a@example.com')
-    ->first();
-
-$activeCount = $zq->table('users')
-    ->where('status', '=', 'active')
-    ->count();
-
-$emails = $zq->table('users')
-    ->where('status', '=', 'active')
-    ->pluck('email');
-```
-
-Returns:
-
-```php
-$user = ['id' => 7, 'email' => 'a@example.com', 'status' => 'active'];
-$activeCount = 24;
-$emails = ['a@example.com', 'b@example.com', 'c@example.com'];
-```
-
-## SQL Compilation
-
-```php
-$compiled = $zq->table('users')
-    ->where('users.status', '=', 'active')
-    ->latest('users.created_at')
-    ->limit(10)
-    ->compileSelect();
-```
-
-Returns:
-
-```php
-[
-    'sql' => 'SELECT * FROM `users` WHERE `users`.`status` = ? ORDER BY `users`.`created_at` DESC LIMIT 10',
-    'params' => ['active'],
-]
+$user   = $zq->table('users')->where('email', '=', 'a@example.com')->first();   // row or null
+$count  = $zq->table('users')->where('status', '=', 'active')->count();         // int
+$emails = $zq->table('users')->where('status', '=', 'active')->pluck('email');  // list
+$id     = $zq->table('users')->insert(['email' => 'new@example.com'])->insertGetId();
 ```
 
 ## Transactions
 
 ```php
-$zq->transaction(function () {
-    $this->table('users')
-        ->where('id', '=', 10)
-        ->update(['status' => 'disabled'])
-        ->executeUpdate();
-
-    $this->statement(
-        'INSERT INTO audit_logs (action, user_id) VALUES (?, ?)',
-        ['user.disabled', 10]
-    );
+$zq->transaction(function (ZQuery $db) {
+    $db->table('users')->where('id', '=', 10)->update(['status' => 'disabled'])->executeUpdate();
+    $db->statement('INSERT INTO audit_logs (action, user_id) VALUES (?, ?)', ['user.disabled', 10]);
 });
 ```
 
 Nested `transaction()` calls use savepoints, so an inner failure rolls back only the inner block.
 
-## More Docs
+## Docs
 
-See [USAGE.md](USAGE.md) for the extended usage guide with more examples and result shapes.
+- [USAGE.md](USAGE.md): examples for common tasks
+- [docs/API.md](docs/API.md): every method and option

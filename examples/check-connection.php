@@ -1,10 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
+require __DIR__ . '/../vendor/autoload.php';
+
 use ZQuery\Support\ConfigLoader;
 use ZQuery\Support\DatabaseChecker;
 use ZQuery\Support\Environment;
 
-Environment::load(__DIR__ . '/../../config/.env');
+Environment::load(__DIR__ . '/../config/.env');
 
 $config = new ConfigLoader;
 

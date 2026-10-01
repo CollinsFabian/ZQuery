@@ -9,6 +9,12 @@ use ZQuery\Connection\StatementInterface;
 
 final class NullConnection implements ConnectionInterface
 {
+    /** @var string[] SQL of every execute() call, in order. */
+    public array $executed = [];
+
+    /** @var string|int Value returned by lastInsertId(). */
+    public string|int $lastId = 0;
+
     public function prepare(string $sql): StatementInterface
     {
         return new NullStatement();
@@ -16,6 +22,8 @@ final class NullConnection implements ConnectionInterface
 
     public function execute(string $sql, array $params = []): StatementInterface
     {
+        $this->executed[] = $sql;
+
         return new NullStatement();
     }
 
@@ -33,15 +41,11 @@ final class NullConnection implements ConnectionInterface
 
     public function lastInsertId(): string|int
     {
-        return 0;
+        return $this->lastId;
     }
 
     public function isConnected(): bool
     {
         return true;
-    }
-
-    public function close(): void
-    {
     }
 }

@@ -18,6 +18,4 @@ interface ConnectionInterface
     public function lastInsertId(): string|int;
 
     public function isConnected(): bool;
-
-    public function close(): void;
 }

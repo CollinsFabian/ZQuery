@@ -24,7 +24,8 @@
         }
     },
     "scripts": {
-        "test": "php tests/SqlCompilationTest.php"
+        "test": "php tests/SqlCompilationTest.php",
+        "test:integration": "php tests/IntegrationTest.php"
     },
     "minimum-stability": "stable",
     "prefer-stable": true

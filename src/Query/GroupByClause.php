@@ -6,7 +6,10 @@ namespace ZQuery\Query;
 
 use ZQuery\Query\Grammar\GrammarInterface;
 
-class GroupByClause
+/**
+ * @internal Built by QueryBuilder; not part of the public API.
+ */
+final class GroupByClause
 {
     private array $columns = [];
 

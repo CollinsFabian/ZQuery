@@ -6,7 +6,10 @@ namespace ZQuery\Query;
 
 use ZQuery\Query\Grammar\GrammarInterface;
 
-class HavingClause
+/**
+ * @internal Built by QueryBuilder; not part of the public API.
+ */
+final class HavingClause
 {
     private array $conditions = [];
 

@@ -4,22 +4,24 @@ declare(strict_types=1);
 
 namespace ZQuery\Query;
 
-class LimitClause
+/**
+ * @internal Built by QueryBuilder; not part of the public API.
+ */
+final class LimitClause
 {
-    private int $limit;
-    private ?int $offset;
-
-    public function __construct(int $limit, ?int $offset = null)
-    {
-        $this->limit = $limit;
-        $this->offset = $offset;
+    public function __construct(
+        private readonly int $limit,
+        private readonly ?int $offset = null
+    ) {
     }
 
-    public function toSql(): string
+    public function getLimit(): int
     {
-        if ($this->offset !== null) {
-            return "{$this->offset}, {$this->limit}";
-        }
-        return (string)$this->limit;
+        return $this->limit;
+    }
+
+    public function getOffset(): ?int
+    {
+        return $this->offset;
     }
 }

@@ -1,53 +1,62 @@
 <?php
 
+declare(strict_types=1);
+
 namespace ZQuery;
 
 use Closure;
 use ZQuery\Connection\PdoConnection;
 use ZQuery\Connection\MysqliConnection;
 use ZQuery\Connection\ConnectionInterface;
+use ZQuery\Connection\LoggingConnection;
 use ZQuery\Query\Grammar\GrammarInterface;
 use ZQuery\Query\Grammar\MysqlGrammar;
 use ZQuery\Query\QueryBuilder;
+use ZQuery\Utils\QueryLogger;
 
 class ZQuery
 {
-    protected ConnectionInterface $connection;
-    protected GrammarInterface $grammar;
-    protected string $prefix = '';
+    private readonly ConnectionInterface $connection;
+    private readonly GrammarInterface $grammar;
+    private readonly string $prefix;
     private int $transactionDepth = 0;
 
     /**
-     * ZQuery
+     * The engine is chosen from the type of $connection:
      *
-     * @param array $config sets configuration to establish connection,
+     *  - `\mysqli`              wrapped in the mysqli connection
+     *  - `\PDO`                 wrapped in the PDO connection
+     *  - `ConnectionInterface`  used as is (custom or decorated connections)
      *
-     * example
-     * ```
-     * $config = [
-     *  "prefix" => "DB_TABLES_PREFIX_" ?? "", // optional table prefix string, and connection params
-     *  "engine" => "pdo|mysqli",
-     *  "pdo|mysqli" => "", //instance of used class
-     *  "grammar" => interface GrammarInterface,
-     * ];
-     * ```
+     * ZQuery never opens or closes connections; create and close your own `mysqli`/`PDO`.
+     *
+     * @param GrammarInterface|null $grammar SQL dialect. Defaults to MysqlGrammar.
+     * @param string $prefix Prepended to every table name passed to table().
+     * @param bool|callable(string, array, float): void $log `true` records every statement in
+     *        QueryLogger; a callable receives (sql, params, durationMs).
      */
-    public function __construct(array $config)
-    {
-        $this->prefix = $config['prefix'] ?? '';
+    public function __construct(
+        \PDO|\mysqli|ConnectionInterface $connection,
+        ?GrammarInterface $grammar = null,
+        string $prefix = '',
+        bool|callable $log = false
+    ) {
+        $connection = match (true) {
+            $connection instanceof ConnectionInterface => $connection,
+            $connection instanceof \PDO => new PdoConnection($connection),
+            default => new MysqliConnection($connection),
+        };
 
-        $engine = strtolower((string) ($config['engine'] ?? ''));
-        if (!in_array($engine, ['pdo', 'mysqli'], true)) {
-            throw new \InvalidArgumentException("ZQuery config 'engine' must be 'pdo' or 'mysqli'.");
+        if ($log !== false) {
+            $connection = new LoggingConnection(
+                $connection,
+                $log === true ? QueryLogger::log(...) : Closure::fromCallable($log)
+            );
         }
-        if (!isset($config[$engine])) {
-            throw new \InvalidArgumentException("ZQuery config is missing the '{$engine}' connection instance.");
-        }
 
-        $this->connection = $engine === 'pdo' ? new PdoConnection($config['pdo']) : new MysqliConnection($config['mysqli']);
-
-        // Set grammar (default: MySQL)
-        $this->grammar = $config['grammar'] ?? new MysqlGrammar();
+        $this->connection = $connection;
+        $this->grammar = $grammar ?? new MysqlGrammar();
+        $this->prefix = $prefix;
     }
 
     public function table(string $table): QueryBuilder

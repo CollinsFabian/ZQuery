@@ -7,7 +7,10 @@ use mysqli_result;
 use mysqli_stmt as NativeStatement;
 use ZQuery\Exceptions\ConnectionException;
 
-class MysqliStatement implements StatementInterface
+/**
+ * @internal Returned via StatementInterface; not part of the public API.
+ */
+final class MysqliStatement implements StatementInterface
 {
     private NativeStatement $stmt;
     private ?mysqli_result $result = null;

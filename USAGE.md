@@ -1,239 +1,132 @@
 # ZQuery Usage
 
-This is the extended usage guide for ZQuery.
+Examples for common tasks. For every method and option, see [docs/API.md](docs/API.md).
 
-For the package overview and quick start, see [README.md](README.md).
+## Connect
 
-## Install (Composer)
-
-```bash
-composer require zi/zquery
-```
-
-## Configure And Build Queries
-
-### PDO
 ```php
 use ZQuery\ZQuery;
-use ZQuery\Query\Grammar\MysqlGrammar;
 
-$pdo = new PDO('mysql:host=127.0.0.1;dbname=app', 'user', 'pass', [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-]);
+// mysqli
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+$zq = new ZQuery(new mysqli('127.0.0.1', 'user', 'pass', 'app'));
 
-$zq = new ZQuery([
-    'engine' => 'pdo',
-    'pdo' => $pdo,
-    'prefix' => '', // optional
-    'grammar' => new MysqlGrammar(), // optional
-]);
+// PDO
+$pdo = new PDO('mysql:host=127.0.0.1;dbname=app', 'user', 'pass', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+$zq = new ZQuery($pdo);
+```
 
-$users = $zq->table('users')
+Optional arguments: `grammar` (default MySQL), `prefix` (added to every table name) and `log` (see [Log queries](#log-queries)). Use named arguments to skip ahead: `new ZQuery($pdo, prefix: 'app_')`.
+
+ZQuery never opens or closes connections. Create and close your own `mysqli` or `PDO`.
+
+## Read
+
+```php
+$rows = $zq->table('users')
     ->select(['id', 'email'])
     ->where('status', '=', 'active')
     ->orderBy('id', 'DESC')
-    ->limit(10)
+    ->limit(10, 20)          // 10 rows, skipping 20
+    ->get();                 // list of rows
+
+$user   = $zq->table('users')->where('id', '=', 7)->first();            // row or null
+$name   = $zq->table('users')->where('id', '=', 7)->value('name');      // single value
+$emails = $zq->table('users')->where('status', '=', 'active')->pluck('email');
+$total  = $zq->table('users')->where('status', '=', 'active')->count();
+$exists = $zq->table('users')->whereIn('role', ['admin', 'owner'])->exists();
+```
+
+## Filter
+
+```php
+$zq->table('users')
+    ->where('age', '>', 18)
+    ->where(['role' => 'admin', 'verified' => 1])         // equality on each key
+    ->whereNull('deleted_at')
     ->get();
-```
 
-Returns:
-
-```php
-[
-    ['id' => 42, 'email' => 'ada@example.com'],
-    ['id' => 41, 'email' => 'grace@example.com'],
-]
-```
-
-### MySQLi
-```php
-use ZQuery\ZQuery;
-use ZQuery\Query\Grammar\MysqlGrammar;
-
-$mysqli = new mysqli('127.0.0.1', 'user', 'pass', 'app');
-
-$zq = new ZQuery([
-    'engine' => 'mysqli',
-    'mysqli' => $mysqli,
-    'prefix' => '',
-    'grammar' => new MysqlGrammar(),
-]);
-
-$rows = $zq->table('users')
-    ->where([['status', '=', 'active'], ['role', '=', 'admin']])
+// OR conditions and groups
+$zq->table('posts')
+    ->where('tenant_id', '=', 7)
+    ->where(fn ($q) => $q->where('title', 'like', 'a%')->orWhere('body', 'like', 'a%'))
     ->get();
+// WHERE `tenant_id` = ? AND (`title` LIKE ? OR `body` LIKE ?)
 ```
 
-Returns:
+`AND` binds tighter than `OR`. Put an `orWhere` inside a group whenever other conditions (tenant, soft delete, permissions) must always apply.
+
+## Join, Group, Aggregate
 
 ```php
-[
-    [
-        'id' => 1,
-        'email' => 'admin@example.com',
-        'status' => 'active',
-        'role' => 'admin',
-    ],
-]
-```
+$zq->table('users')
+    ->leftJoin('profiles', 'profiles.user_id', '=', 'users.id')
+    ->select(['users.id', 'profiles.bio as about'])
+    ->get();
 
-## Builder Helpers
-
-```php
-$user = $zq->table('users')
-    ->where('email', '=', 'a@example.com')
-    ->first();
-
-$activeCount = $zq->table('users')
-    ->where('status', '=', 'active')
-    ->count();
-
-$hasAdmins = $zq->table('users')
-    ->whereIn('role', ['admin', 'owner'])
-    ->exists();
-
-$emails = $zq->table('users')
-    ->where('status', '=', 'active')
-    ->pluck('email');
-```
-
-Returns:
-
-```php
-$user = [
-    'id' => 7,
-    'email' => 'a@example.com',
-    'status' => 'active',
-];
-
-$activeCount = 24;
-
-$hasAdmins = true;
-
-$emails = [
-    'a@example.com',
-    'b@example.com',
-    'c@example.com',
-];
-```
-
-## SQL Compilation
-
-The public builder API now exposes compilation directly when you want to inspect SQL before execution.
-
-```php
-$compiled = $zq->table('users')
-    ->where('users.status', '=', 'active')
-    ->latest('users.created_at')
-    ->limit(10)
-    ->compileSelect();
-
-$compiled['sql'];
-$compiled['params'];
-```
-
-Returns:
-
-```php
-$compiled = [
-    'sql' => 'SELECT * FROM `users` WHERE `users`.`status` = ? ORDER BY `users`.`created_at` DESC LIMIT 10',
-    'params' => ['active'],
-];
-```
-
-## Inserts, Updates, Deletes
-
-```php
-$qb = $zq->table('users');
-
-// Insert
-$qb->insert([
-    'email' => 'a@example.com',
-    'status' => 'active',
-])->executeInsert();
-
-// Update
-$qb->where('id', '=', 10)
-   ->update(['status' => 'disabled'])
-   ->executeUpdate();
-
-// Delete
-$qb->where('id', '=', 10)->executeDelete();
-```
-
-Returns:
-
-```php
-$inserted = 1; // affected rows
-$updated = 1;  // affected rows
-$deleted = 1;  // affected rows
-```
-
-## Raw Expressions
-
-Use `RawExpression` to bypass identifier escaping for expressions.
-
-```php
-use ZQuery\Query\RawExpression;
-
-$rows = $zq->table('orders')
-    ->select([
-        'user_id',
-        new RawExpression('COUNT(*) AS total_orders'),
-    ])
+$zq->table('orders')
+    ->select(['user_id', $zq->raw('COUNT(*) AS total_orders')])
     ->groupBy('user_id')
+    ->having('total_orders', '>', 1)
     ->get();
 ```
 
-Returns:
+## Write
 
 ```php
-[
-    ['user_id' => 1, 'total_orders' => 5],
-    ['user_id' => 2, 'total_orders' => 3],
-]
+// Insert one row
+$zq->table('users')->insert(['email' => 'a@example.com', 'status' => 'active'])->executeInsert();   // 1
+
+// Insert many rows in one statement
+$zq->table('users')->insert([
+    ['email' => 'a@example.com', 'status' => 'active'],
+    ['email' => 'b@example.com', 'status' => 'pending'],
+])->executeInsert();                                                                                 // 2
+
+// Insert and get the new id
+$id = $zq->table('users')->insert(['email' => 'c@example.com'])->insertGetId();
+
+// Update / delete (a WHERE clause is required)
+$zq->table('users')->where('id', '=', 10)->update(['status' => 'disabled'])->executeUpdate();        // affected rows
+$zq->table('users')->where('id', '=', 10)->executeDelete();                                          // affected rows
 ```
 
-## Transactions And Raw Statements
+Start each statement from a new `table()` call. A builder keeps its conditions, so reusing one carries earlier WHERE clauses into the next statement.
 
-```php
-$zq->transaction(function () {
-    $this->table('users')
-        ->where('id', '=', 10)
-        ->update(['status' => 'disabled'])
-        ->executeUpdate();
-
-    $this->statement(
-        'INSERT INTO audit_logs (action, user_id) VALUES (?, ?)',
-        ['user.disabled', 10]
-    );
-});
-```
-
-Returns:
-
-```php
-null
-```
-
-If you prefer, `transaction()` still accepts a callback parameter too:
+## Transactions
 
 ```php
 $zq->transaction(function (ZQuery $db) {
-    $db->table('users')->where('status', '=', 'active')->count();
+    $db->table('accounts')->where('id', '=', 1)->update(['balance' => 90])->executeUpdate();
+    $db->table('accounts')->where('id', '=', 2)->update(['balance' => 110])->executeUpdate();
 });
 ```
 
-Returns:
+It commits when the callback returns and rolls back when it throws. Nested calls use savepoints.
+
+## Raw SQL
 
 ```php
-24
+$row = $zq->statement('SELECT * FROM users WHERE email = ?', ['ada@example.com'])->fetch();
 ```
 
-## Notes
+Use this for anything the builder lacks: subqueries, `BETWEEN`, upserts, `UNION`.
 
-- `grammar` is optional; MySQL is the default.
-- `where()` always uses bound parameters to prevent SQL injection.
-- `update()` and `delete()` require a WHERE clause.
-- `toSql()`, `compileSelect()`, `compileInsert()`, `compileUpdate()`, and `compileDelete()` are available for inspection and testing.
-- ZQuery now ships as a query-builder-only package; entity mapping and repository abstractions were removed.
+## Log Queries
+
+```php
+$zq = new ZQuery($mysqli, log: true);
+$zq->table('users')->first();
+\ZQuery\Utils\QueryLogger::dump();   // [14:02:11] SELECT * FROM `users` LIMIT 1 | [] (0.42 ms)
+```
+
+Pass a callable to `log` to send each query to your own logger. Logged parameters are not masked.
+
+## Inspect SQL Without Running It
+
+```php
+$compiled = $zq->table('users')->where('status', '=', 'active')->limit(10)->compileSelect();
+// ['sql' => 'SELECT * FROM `users` WHERE `status` = ? LIMIT 10', 'params' => ['active']]
+```
+
+`toSql()`, `compileInsert()`, `compileUpdate()` and `compileDelete()` work the same way.
