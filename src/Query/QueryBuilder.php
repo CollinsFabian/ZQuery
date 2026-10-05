@@ -398,7 +398,7 @@ class QueryBuilder
         $this->executeInsert();
         $id = $this->connection->lastInsertId();
 
-        return is_string($id) && ctype_digit($id) && strlen($id) < 19 ? (int) $id : $id;
+        return is_string($id) && preg_match('/^\d{1,18}$/', $id) === 1 ? (int) $id : $id;
     }
 
     /**

@@ -102,9 +102,9 @@ run('Bindings follow SQL order even when having() is called before where()', fun
 
 run('Unsupported operators are rejected in where, having and join', function (): void {
     $attempts = [
-        fn () => builder(new MysqlGrammar())->where('id', '= 1 OR 1=1 --', 5),
-        fn () => builder(new MysqlGrammar())->groupBy('id')->having('id', '; DROP TABLE users', 1),
-        fn () => builder(new MysqlGrammar())->join('posts', 'posts.user_id', 'OR 1=1', 'users.id'),
+        fn() => builder(new MysqlGrammar())->where('id', '= 1 OR 1=1 --', 5),
+        fn() => builder(new MysqlGrammar())->groupBy('id')->having('id', '; DROP TABLE users', 1),
+        fn() => builder(new MysqlGrammar())->join('posts', 'posts.user_id', 'OR 1=1', 'users.id'),
     ];
 
     foreach ($attempts as $attempt) {
@@ -133,7 +133,7 @@ run('Operators are normalised and associative where() is supported', function ()
 });
 
 run('ZQuery infers the engine from the connection it receives', function (): void {
-    $pdo = new ZQuery\ZQuery(new PDO('sqlite::memory:'));
+    $pdo = new ZQuery\ZQuery(unconnectedPdo());
     assertSameValue(true, $pdo->getConnection() instanceof ZQuery\Connection\PdoConnection, 'PDO should use PdoConnection.');
 
     $custom = new NullConnection();
@@ -208,6 +208,48 @@ function expectInvalid(callable $fn, string $message): void
     throw new RuntimeException($message);
 }
 
+/**
+ * A PDO that was never connected. ZQuery only wraps it, so unit tests need no database driver.
+ */
+function unconnectedPdo(): PDO
+{
+    return (new ReflectionClass(PDO::class))->newInstanceWithoutConstructor();
+}
+
+/**
+ * A connection whose statements always fail, to check failure paths without a database.
+ */
+function failingConnection(): ZQuery\Connection\ConnectionInterface
+{
+    return new class implements ZQuery\Connection\ConnectionInterface {
+        public function prepare(string $sql): ZQuery\Connection\StatementInterface
+        {
+            throw new ZQuery\Exceptions\QueryException($sql, [], 'forced failure');
+        }
+
+        public function execute(string $sql, array $params = []): ZQuery\Connection\StatementInterface
+        {
+            throw new ZQuery\Exceptions\QueryException($sql, $params, 'forced failure');
+        }
+
+        public function beginTransaction(): void {}
+
+        public function commit(): void {}
+
+        public function rollBack(): void {}
+
+        public function lastInsertId(): string|int
+        {
+            return 0;
+        }
+
+        public function isConnected(): bool
+        {
+            return false;
+        }
+    };
+}
+
 run('orWhere joins with OR and keeps bindings in SQL order', function (): void {
     $compiled = builder(new MysqlGrammar())
         ->where('status', '=', 'active')
@@ -227,9 +269,9 @@ run('orWhere joins with OR and keeps bindings in SQL order', function (): void {
 run('Closures create parenthesised groups', function (): void {
     $compiled = builder(new MysqlGrammar())
         ->where('tenant_id', '=', 7)
-        ->where(fn (QueryBuilder $q) => $q->where('role', '=', 'admin')->orWhere('role', '=', 'owner'))
-        ->orWhere(fn (QueryBuilder $q) => $q->where('vip', '=', 1)->where('age', '>', 30))
-        ->where(fn (QueryBuilder $q) => null)
+        ->where(fn(QueryBuilder $q) => $q->where('role', '=', 'admin')->orWhere('role', '=', 'owner'))
+        ->orWhere(fn(QueryBuilder $q) => $q->where('vip', '=', 1)->where('age', '>', 30))
+        ->where(fn(QueryBuilder $q) => null)
         ->compileSelect();
 
     assertSameValue(
@@ -252,7 +294,7 @@ run('orWhere with an array becomes one AND-ed group', function (): void {
 
 run('Groups work in UPDATE and DELETE and bind in order', function (): void {
     $update = builder(new MysqlGrammar())
-        ->where(fn (QueryBuilder $q) => $q->where('a', '=', 1)->orWhere('b', '=', 2))
+        ->where(fn(QueryBuilder $q) => $q->where('a', '=', 1)->orWhere('b', '=', 2))
         ->update(['x' => 9])
         ->compileUpdate();
 
@@ -261,9 +303,9 @@ run('Groups work in UPDATE and DELETE and bind in order', function (): void {
 });
 
 run('Malformed where conditions are rejected', function (): void {
-    expectInvalid(fn () => builder(new MysqlGrammar())->where([['id', '=']]), 'Short condition array accepted.');
-    expectInvalid(fn () => builder(new MysqlGrammar())->orWhere('id', 'DROP', 1), 'Bad operator accepted in orWhere.');
-    expectInvalid(fn () => builder(new MysqlGrammar())->where(fn (QueryBuilder $q) => $q->where('id', 'x', 1)), 'Bad operator accepted in group.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->where([['id', '=']]), 'Short condition array accepted.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->orWhere('id', 'DROP', 1), 'Bad operator accepted in orWhere.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->where(fn(QueryBuilder $q) => $q->where('id', 'x', 1)), 'Bad operator accepted in group.');
 });
 
 run('Bulk insert compiles one multi-row statement', function (): void {
@@ -282,9 +324,9 @@ run('Bulk insert compiles one multi-row statement', function (): void {
 });
 
 run('Bulk insert validates its rows', function (): void {
-    expectInvalid(fn () => builder(new MysqlGrammar())->insert([]), 'Empty insert accepted.');
-    expectInvalid(fn () => builder(new MysqlGrammar())->insert([['a' => 1], ['b' => 2]]), 'Mismatched rows accepted.');
-    expectInvalid(fn () => builder(new MysqlGrammar())->insert([['a' => 1], ['a' => 1, 'b' => 2]]), 'Extra column accepted.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->insert([]), 'Empty insert accepted.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->insert([['a' => 1], ['b' => 2]]), 'Mismatched rows accepted.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->insert([['a' => 1], ['a' => 1, 'b' => 2]]), 'Extra column accepted.');
 
     $threw = false;
     try {
@@ -337,26 +379,114 @@ run('Logging connection reports sql, params and duration, even on failure', func
     assertSameValue([1], $log[0][1], 'Logged params did not match.');
     assertSameValue(true, $log[0][2] >= 0.0, 'Duration should be a non-negative float.');
 
+    // log: true feeds QueryLogger
     ZQuery\Utils\QueryLogger::clear();
-    $zq = new ZQuery\ZQuery(new PDO('sqlite::memory:'), log: true);
+    $zq = new ZQuery\ZQuery(new NullConnection(), log: true);
     $zq->statement('SELECT 1');
     $entries = ZQuery\Utils\QueryLogger::all();
     assertSameValue('SELECT 1', $entries[0]['query'], 'log => true should feed QueryLogger.');
+    assertSameValue(true, $entries[0]['duration_ms'] >= 0.0, 'QueryLogger should record a duration.');
+
     // A failing statement is still logged
+    ZQuery\Utils\QueryLogger::clear();
+    $failing = new ZQuery\ZQuery(failingConnection(), log: true);
+    $threw = false;
     try {
-        $zq->statement('SELECT * FROM table_that_does_not_exist');
+        $failing->statement('SELECT * FROM table_that_does_not_exist');
     } catch (ZQuery\Exceptions\QueryException) {
+        $threw = true;
     }
-    assertSameValue(2, count(ZQuery\Utils\QueryLogger::all()), 'Failed statement should still be logged.');
+    assertSameValue(true, $threw, 'The failing connection should throw.');
+    assertSameValue(1, count(ZQuery\Utils\QueryLogger::all()), 'Failed statement should still be logged.');
     ZQuery\Utils\QueryLogger::clear();
 
     $rejected = false;
     try {
-        new ZQuery\ZQuery(new PDO('sqlite::memory:'), log: 'nope-not-callable');
+        new ZQuery\ZQuery(new NullConnection(), log: 'not-callable');
     } catch (TypeError) {
         $rejected = true;
     }
     assertSameValue(true, $rejected, 'A non-callable log option should be rejected.');
+});
+
+run('Upsert compiles for MySQL and PostgreSQL', function (): void {
+    $rows = [['sku' => 'A1', 'name' => 'Apple', 'price' => 2], ['sku' => 'B2', 'name' => 'Berry', 'price' => 3]];
+
+    $mysql = builder(new MysqlGrammar())->upsert($rows, 'sku')->compileUpsert();
+    assertSameValue(
+        'INSERT INTO `users` (`sku`, `name`, `price`) VALUES (?, ?, ?), (?, ?, ?) ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `price` = VALUES(`price`)',
+        $mysql['sql'],
+        'MySQL upsert SQL did not match.'
+    );
+    assertSameValue(['A1', 'Apple', 2, 'B2', 'Berry', 3], $mysql['params'], 'MySQL upsert params did not match.');
+
+    $pg = builder(new PostgresGrammar())->upsert($rows, ['sku'], ['price'])->compileUpsert();
+    assertSameValue(
+        'INSERT INTO "users" ("sku", "name", "price") VALUES (?, ?, ?), (?, ?, ?) ON CONFLICT ("sku") DO UPDATE SET "price" = EXCLUDED."price"',
+        $pg['sql'],
+        'PostgreSQL upsert SQL did not match.'
+    );
+});
+
+run('Upsert supports bound and raw update values in SQL order', function (): void {
+    $compiled = builder(new MysqlGrammar())
+        ->upsert(['sku' => 'A1', 'hits' => 1], 'sku', ['hits' => new RawExpression('`hits` + 1'), 'seen_at' => '2026-10-01'])
+        ->compileUpsert();
+
+    assertSameValue(
+        'INSERT INTO `users` (`sku`, `hits`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `hits` = `hits` + 1, `seen_at` = ?',
+        $compiled['sql'],
+        'Upsert set-values SQL did not match.'
+    );
+    assertSameValue(['A1', 1, '2026-10-01'], $compiled['params'], 'VALUES params must come before SET params.');
+});
+
+run('Upsert with nothing to update stays valid', function (): void {
+    $mysql = builder(new MysqlGrammar())->upsert(['sku' => 'A1'], 'sku')->compileUpsert();
+    assertSameValue('INSERT INTO `users` (`sku`) VALUES (?) ON DUPLICATE KEY UPDATE `sku` = `sku`', $mysql['sql'], 'MySQL no-op upsert did not match.');
+
+    $pg = builder(new PostgresGrammar())->upsert(['sku' => 'A1'], 'sku')->compileUpsert();
+    assertSameValue('INSERT INTO "users" ("sku") VALUES (?) ON CONFLICT ("sku") DO NOTHING', $pg['sql'], 'PostgreSQL DO NOTHING did not match.');
+});
+
+run('Upsert validates its arguments', function (): void {
+    expectInvalid(fn() => builder(new MysqlGrammar())->upsert(['a' => 1], []), 'Empty uniqueBy accepted.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->upsert(['a' => 1], 'missing'), 'Unknown unique column accepted.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->upsert(['a' => 1, 'b' => 2], 'a', ['nope']), 'Unknown update column accepted.');
+    expectInvalid(fn() => builder(new MysqlGrammar())->upsert([['a' => 1], ['b' => 2]], 'a'), 'Mismatched rows accepted.');
+
+    $threw = false;
+    try {
+        builder(new MysqlGrammar())->insert(['a' => 1])->compileUpsert();
+    } catch (RuntimeException) {
+        $threw = true;
+    }
+    assertSameValue(true, $threw, 'compileUpsert() without upsert() should throw.');
+});
+
+run('transaction() passes the ZQuery instance and keeps $this intact', function (): void {
+    $zq = new ZQuery\ZQuery(new NullConnection());
+
+    $service = new class($zq) {
+        public string $marker = 'service';
+
+        public function __construct(private ZQuery\ZQuery $zq) {}
+
+        public function run(): array
+        {
+            return $this->zq->transaction(function (ZQuery\ZQuery $db): array {
+                return [$this->marker, $db === $this->zq];
+            });
+        }
+
+        public function runWithoutParameter(): string
+        {
+            return $this->zq->transaction(fn() => $this->marker);
+        }
+    };
+
+    assertSameValue(['service', true], $service->run(), 'Closure $this must stay the service and receive the ZQuery instance.');
+    assertSameValue('service', $service->runWithoutParameter(), 'A callback without parameters must keep $this too.');
 });
 
 echo PHP_EOL . 'SQL compilation tests passed.' . PHP_EOL;

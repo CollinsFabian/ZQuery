@@ -78,6 +78,14 @@ class ZQuery
         return $this->connection->execute($sql, $params);
     }
 
+    /**
+     * Run $callback inside a transaction and return its result. The callback receives this
+     * instance and is never rebound, so `$this` inside it stays whatever it was where you wrote it.
+     * It commits when the callback returns and rolls back, then rethrows, when it throws.
+     * Nested calls use savepoints.
+     *
+     * @param callable(self): mixed $callback
+     */
     public function transaction(callable $callback): mixed
     {
         $depth = $this->transactionDepth;
@@ -91,7 +99,7 @@ class ZQuery
         $this->transactionDepth++;
 
         try {
-            $result = $this->invokeTransactionCallback($callback);
+            $result = $callback($this);
             $this->transactionDepth--;
 
             if ($depth === 0) {
@@ -112,31 +120,6 @@ class ZQuery
 
             throw $e;
         }
-    }
-
-    private function invokeTransactionCallback(callable $callback): mixed
-    {
-        if ($callback instanceof Closure) {
-            $reflection = new \ReflectionFunction($callback);
-
-            if (!$reflection->isStatic()) {
-                return $reflection->getNumberOfParameters() > 0
-                    ? $callback->call($this, $this)
-                    : $callback->call($this);
-            }
-
-            return $reflection->getNumberOfParameters() > 0
-                ? $callback($this)
-                : $callback();
-        }
-
-        $reflection = is_array($callback)
-            ? new \ReflectionMethod($callback[0], $callback[1])
-            : new \ReflectionFunction(Closure::fromCallable($callback));
-
-        return $reflection->getNumberOfParameters() > 0
-            ? $callback($this)
-            : $callback();
     }
 
     public function getConnection(): ConnectionInterface

@@ -41,14 +41,14 @@ ZQuery uses the connection you give it and never opens or closes one. Turn on ex
 
 ### transaction()
 
-Commits when the callback returns, and rolls back and rethrows when it throws. The callback can take the `ZQuery` instance or use `$this`:
+Commits when the callback returns, and rolls back and rethrows when it throws. The callback receives the `ZQuery` instance and is never rebound, so `$this` inside it is whatever it was where you wrote the closure:
 
 ```php
 $zq->transaction(function (ZQuery $db) {
     $db->table('users')->where('id', '=', 10)->update(['status' => 'disabled'])->executeUpdate();
 });
 
-$affected = $zq->transaction(fn () => $this->table('orders')->insert(['total' => 10])->executeInsert());
+$affected = $zq->transaction(fn (ZQuery $db) => $db->table('orders')->insert(['total' => 10])->executeInsert());
 ```
 
 Nested calls create savepoints, so an exception in an inner block rolls back only that block. In MySQL, DDL statements (`CREATE`, `ALTER`, ...) commit implicitly.
