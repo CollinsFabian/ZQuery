@@ -79,47 +79,100 @@ class ZQuery
     }
 
     /**
+     * Start a transaction, or a savepoint when one is already open.
+     * Every call needs a matching commit() or rollBack(). Prefer transaction(), which pairs them for you.
+     */
+    public function beginTransaction(): void
+    {
+        if ($this->transactionDepth === 0) {
+            $this->connection->beginTransaction();
+        } else {
+            $this->connection->execute("SAVEPOINT zq_sp_{$this->transactionDepth}");
+        }
+
+        $this->transactionDepth++;
+    }
+
+    /**
+     * Commit the transaction, or release the innermost savepoint.
+     *
+     * @throws \LogicException When no transaction is open.
+     */
+    public function commit(): void
+    {
+        $depth = $this->openTransactionDepth('commit');
+
+        if ($depth === 0) {
+            $this->connection->commit();
+        } else {
+            $this->connection->execute("RELEASE SAVEPOINT zq_sp_{$depth}");
+        }
+
+        $this->transactionDepth = $depth;
+    }
+
+    /**
+     * Roll back the transaction, or back to the innermost savepoint.
+     *
+     * @throws \LogicException When no transaction is open.
+     */
+    public function rollBack(): void
+    {
+        $depth = $this->openTransactionDepth('roll back');
+
+        if ($depth === 0) {
+            $this->connection->rollBack();
+        } else {
+            $this->connection->execute("ROLLBACK TO SAVEPOINT zq_sp_{$depth}");
+        }
+
+        $this->transactionDepth = $depth;
+    }
+
+    /**
      * Run $callback inside a transaction and return its result. The callback receives this
      * instance and is never rebound, so `$this` inside it stays whatever it was where you wrote it.
      * It commits when the callback returns and rolls back, then rethrows, when it throws.
      * Nested calls use savepoints.
      *
      * @param callable(self): mixed $callback
+     * @throws \LogicException When the callback leaves its transaction unbalanced.
      */
     public function transaction(callable $callback): mixed
     {
-        $depth = $this->transactionDepth;
-
-        // Outermost call opens a real transaction; nested calls use savepoints.
-        if ($depth === 0) {
-            $this->connection->beginTransaction();
-        } else {
-            $this->connection->execute("SAVEPOINT zq_sp_{$depth}");
-        }
-        $this->transactionDepth++;
+        $this->beginTransaction();
+        $level = $this->transactionDepth;
 
         try {
             $result = $callback($this);
-            $this->transactionDepth--;
 
-            if ($depth === 0) {
-                $this->connection->commit();
-            } else {
-                $this->connection->execute("RELEASE SAVEPOINT zq_sp_{$depth}");
+            if ($this->transactionDepth !== $level) {
+                throw new \LogicException('The transaction callback left its transaction unbalanced.');
             }
+
+            $this->commit();
 
             return $result;
         } catch (\Throwable $e) {
-            $this->transactionDepth = $depth;
-
-            if ($depth === 0) {
-                $this->connection->rollBack();
-            } else {
-                $this->connection->execute("ROLLBACK TO SAVEPOINT zq_sp_{$depth}");
+            // Also unwinds any transaction the callback opened and did not close
+            while ($this->transactionDepth >= $level) {
+                $this->rollBack();
             }
 
             throw $e;
         }
+    }
+
+    /**
+     * @return int The depth the transaction state returns to after the current level ends.
+     */
+    private function openTransactionDepth(string $action): int
+    {
+        if ($this->transactionDepth === 0) {
+            throw new \LogicException("Cannot {$action}: no transaction is open.");
+        }
+
+        return $this->transactionDepth - 1;
     }
 
     public function getConnection(): ConnectionInterface

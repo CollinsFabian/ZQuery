@@ -12,6 +12,9 @@ final class NullConnection implements ConnectionInterface
     /** @var string[] SQL of every execute() call, in order. */
     public array $executed = [];
 
+    /** @var string[] beginTransaction/commit/rollBack calls, in order. */
+    public array $transactionCalls = [];
+
     /** @var string|int Value returned by lastInsertId(). */
     public string|int $lastId = 0;
 
@@ -29,14 +32,17 @@ final class NullConnection implements ConnectionInterface
 
     public function beginTransaction(): void
     {
+        $this->transactionCalls[] = 'begin';
     }
 
     public function commit(): void
     {
+        $this->transactionCalls[] = 'commit';
     }
 
     public function rollBack(): void
     {
+        $this->transactionCalls[] = 'rollback';
     }
 
     public function lastInsertId(): string|int

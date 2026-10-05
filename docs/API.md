@@ -38,6 +38,7 @@ ZQuery uses the connection you give it and never opens or closes one. Turn on ex
 | `transaction(callable $callback): mixed` | Run the callback in a transaction and return its result. |
 | `getConnection()` | The connection. Use it for `lastInsertId()` and `isConnected()`. |
 | `getGrammar()` | The active grammar. |
+| `beginTransaction()` / `commit()` / `rollBack()` | Manual transaction control. See [Manual transactions](#manual-transactions). |
 
 ### transaction()
 
@@ -52,6 +53,21 @@ $affected = $zq->transaction(fn (ZQuery $db) => $db->table('orders')->insert(['t
 ```
 
 Nested calls create savepoints, so an exception in an inner block rolls back only that block. In MySQL, DDL statements (`CREATE`, `ALTER`, ...) commit implicitly.
+
+### Manual transactions
+
+```php
+$zq->beginTransaction();
+try {
+    $zq->table('accounts')->where('id', '=', 1)->update(['balance' => 90])->executeUpdate();
+    $zq->commit();
+} catch (\Throwable $e) {
+    $zq->rollBack();
+    throw $e;
+}
+```
+
+These share the nesting counter with `transaction()`, so mixing them is safe: a nested `beginTransaction()` or `transaction()` creates a savepoint, and `commit()` / `rollBack()` close the innermost level. `commit()` and `rollBack()` throw `LogicException` when no transaction is open. Prefer `transaction()` when you can, since it cannot leave a transaction open. Queries run through your own `mysqli` or `PDO` join the transaction, because it lives on the connection. Starting a transaction directly on that `mysqli` or `PDO` is outside ZQuery's counter, so do not combine the two for one flow.
 
 ## QueryBuilder
 

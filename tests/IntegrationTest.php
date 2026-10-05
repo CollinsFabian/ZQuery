@@ -3,11 +3,18 @@
 declare(strict_types=1);
 
 /**
- * Runs the same scenarios against the mysqli and PDO engines.
+ * Runs the same scenarios against the mysqli and PDO engines on a real MySQL/MariaDB server.
  *
- * Requires a disposable MySQL/MariaDB database, configured through:
- *   ZQUERY_TEST_HOST, ZQUERY_TEST_USER, ZQUERY_TEST_PASS, ZQUERY_TEST_DB
- * Skips (exit 0) when ZQUERY_TEST_DB is not set. The `zq_items` table is dropped and recreated.
+ * Defaults match a local XAMPP install, so `php tests/IntegrationTest.php` works as is.
+ * Override with ZQUERY_TEST_HOST, ZQUERY_TEST_USER and ZQUERY_TEST_PASS.
+ *
+ * Database handling:
+ *  - ZQUERY_TEST_DB unset: a throwaway database `zquery_test_<random>` is created and dropped afterwards.
+ *  - ZQUERY_TEST_DB set and missing: it is created, then dropped afterwards.
+ *  - ZQUERY_TEST_DB set and already existing: it is used, only the `zq_*` tables are dropped afterwards,
+ *    and the database itself is never dropped.
+ *
+ * Skips (exit 0) when the PHP extensions are missing or the server cannot be reached.
  */
 
 require __DIR__ . '/bootstrap.php';
@@ -19,12 +26,57 @@ use ZQuery\ZQuery;
 $host = getenv('ZQUERY_TEST_HOST') ?: '127.0.0.1';
 $user = getenv('ZQUERY_TEST_USER') ?: 'root';
 $pass = getenv('ZQUERY_TEST_PASS') ?: '';
-$name = getenv('ZQUERY_TEST_DB') ?: '';
+$name = getenv('ZQUERY_TEST_DB') ?: 'zquery_test_' . bin2hex(random_bytes(4));
 
-if ($name === '') {
-    echo 'Skipped: set ZQUERY_TEST_DB to run integration tests.' . PHP_EOL;
+if (!extension_loaded('mysqli') || !extension_loaded('pdo_mysql')) {
+    echo 'Skipped: the mysqli and pdo_mysql extensions are required.' . PHP_EOL;
     exit(0);
 }
+
+if (preg_match('/^[A-Za-z0-9_]+$/', $name) !== 1) {
+    fwrite(STDERR, "ZQUERY_TEST_DB may only contain letters, digits and underscores (got '{$name}')." . PHP_EOL);
+    exit(1);
+}
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+try {
+    $admin = new mysqli($host, $user, $pass);
+} catch (mysqli_sql_exception $e) {
+    echo "Skipped: cannot connect to MySQL at {$host} as '{$user}' ({$e->getMessage()})." . PHP_EOL;
+    exit(0);
+}
+
+$existed = (int) $admin->query("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{$name}'")->fetch_row()[0] > 0;
+$created = false;
+
+if (!$existed) {
+    try {
+        $admin->query("CREATE DATABASE `{$name}` CHARACTER SET utf8mb4");
+        $created = true;
+    } catch (mysqli_sql_exception $e) {
+        fwrite(STDERR, "Cannot create test database '{$name}': {$e->getMessage()}" . PHP_EOL
+            . "Grant CREATE to '{$user}', or create the database yourself and set ZQUERY_TEST_DB." . PHP_EOL);
+        exit(1);
+    }
+}
+
+// Runs on success, failure and uncaught exceptions alike. Only a database created by this run is dropped.
+register_shutdown_function(static function () use ($admin, $name, $created): void {
+    try {
+        if ($created) {
+            $admin->query("DROP DATABASE `{$name}`");
+            echo "Dropped test database {$name}." . PHP_EOL;
+        } else {
+            $admin->query("DROP TABLE IF EXISTS `{$name}`.zq_items, `{$name}`.zq_stock");
+        }
+    } catch (mysqli_sql_exception $e) {
+        fwrite(STDERR, "Cleanup failed for '{$name}': {$e->getMessage()}" . PHP_EOL);
+    }
+});
+
+echo ($created ? "Created test database {$name}." : "Using existing database {$name}.") . PHP_EOL;
+
 
 function check(mixed $expected, mixed $actual, string $message): void
 {
@@ -49,8 +101,8 @@ function expectThrows(string $class, callable $fn, string $message): void
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 $engines = [
-    'mysqli' => static fn (mixed $log = false): ZQuery => new ZQuery(new mysqli($host, $user, $pass, $name), log: $log),
-    'pdo' => static fn (mixed $log = false): ZQuery => new ZQuery(
+    'mysqli' => static fn(mixed $log = false): ZQuery => new ZQuery(new mysqli($host, $user, $pass, $name), log: $log),
+    'pdo' => static fn(mixed $log = false): ZQuery => new ZQuery(
         new PDO("mysql:host={$host};dbname={$name};charset=utf8mb4", $user, $pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]),
         log: $log
     ),
@@ -58,7 +110,7 @@ $engines = [
 
 foreach ($engines as $engine => $factory) {
     $zq = $factory();
-    $say = static fn (string $t) => print("[PASS] {$engine}: {$t}" . PHP_EOL);
+    $say = static fn(string $t) => print("[PASS] {$engine}: {$t}" . PHP_EOL);
 
     $zq->statement('DROP TABLE IF EXISTS zq_items');
     $zq->statement('CREATE TABLE zq_items (
@@ -111,7 +163,7 @@ foreach ($engines as $engine => $factory) {
     check(2, count($zq->table('zq_items')->where('name', '=', 'apple')->orWhere('name', '=', 'plum')->get()), 'orWhere');
     $grouped = $zq->table('zq_items')
         ->where('active', '=', 1)
-        ->where(fn ($q) => $q->where('name', '=', 'apple')->orWhere('name', '=', 'pear'))
+        ->where(fn($q) => $q->where('name', '=', 'apple')->orWhere('name', '=', 'pear'))
         ->get();
     check(1, count($grouped), 'grouped where respects precedence (pear is inactive)');
     check(2, count($zq->table('zq_items')->where('name', '=', 'zzz')->orWhere(['active' => 1, 'price' => 3.25])->orWhereIn('name', ['apple'])->get()), 'orWhere array + orWhereIn');
@@ -144,16 +196,16 @@ foreach ($engines as $engine => $factory) {
 
     // update/delete require WHERE and report affected rows
     check(1, $zq->table('zq_items')->where('name', '=', 'pear')->update(['price' => 9.5])->executeUpdate(), 'update count');
-    expectThrows(RuntimeException::class, fn () => $zq->table('zq_items')->update(['price' => 1])->executeUpdate(), 'update without where');
-    expectThrows(RuntimeException::class, fn () => $zq->table('zq_items')->executeDelete(), 'delete without where');
+    expectThrows(RuntimeException::class, fn() => $zq->table('zq_items')->update(['price' => 1])->executeUpdate(), 'update without where');
+    expectThrows(RuntimeException::class, fn() => $zq->table('zq_items')->executeDelete(), 'delete without where');
     $say('update/delete guards');
 
     // errors keep SQL context and are not double-wrapped
-    expectThrows(QueryException::class, fn () => $zq->statement('SELECT * FROM zq_missing'), 'bad SQL raises QueryException');
+    expectThrows(QueryException::class, fn() => $zq->statement('SELECT * FROM zq_missing'), 'bad SQL raises QueryException');
     $say('QueryException on failure');
 
     // transactions: commit, rollback, nested savepoint
-    $zq->transaction(fn (ZQuery $db) => $db->table('zq_items')->insert(['name' => 'kiwi'])->executeInsert());
+    $zq->transaction(fn(ZQuery $db) => $db->table('zq_items')->insert(['name' => 'kiwi'])->executeInsert());
     check(1, $zq->table('zq_items')->where('name', '=', 'kiwi')->count(), 'committed row present');
 
     expectThrows(LogicException::class, function () use ($zq): void {
@@ -187,6 +239,30 @@ foreach ($engines as $engine => $factory) {
     check('SELECT * FROM `zq_items` WHERE `name` = ? LIMIT 1', $logged[0][0], 'logged SQL');
     check(['apple'], $logged[0][1], 'logged params');
     $say('query logging');
+
+    // manual transactions on a real connection
+    $zq->beginTransaction();
+    $zq->table('zq_items')->insert(['name' => 'manual-commit'])->executeInsert();
+    $zq->commit();
+    check(1, $zq->table('zq_items')->where('name', '=', 'manual-commit')->count(), 'manual commit persists');
+
+    $zq->beginTransaction();
+    $zq->table('zq_items')->insert(['name' => 'manual-rollback'])->executeInsert();
+    $zq->rollBack();
+    check(0, $zq->table('zq_items')->where('name', '=', 'manual-rollback')->count(), 'manual rollback discards');
+
+    $zq->beginTransaction();
+    $zq->table('zq_items')->insert(['name' => 'manual-outer'])->executeInsert();
+    $zq->beginTransaction();
+    $zq->table('zq_items')->insert(['name' => 'manual-inner'])->executeInsert();
+    $zq->rollBack();                                   // inner savepoint only
+    $zq->transaction(fn(ZQuery $db) => $db->table('zq_items')->insert(['name' => 'manual-closure'])->executeInsert());
+    $zq->commit();
+    check(1, $zq->table('zq_items')->where('name', '=', 'manual-outer')->count(), 'outer manual insert survives');
+    check(0, $zq->table('zq_items')->where('name', '=', 'manual-inner')->count(), 'inner manual insert rolled back');
+    check(1, $zq->table('zq_items')->where('name', '=', 'manual-closure')->count(), 'closure inside a manual transaction commits with it');
+    expectThrows(LogicException::class, fn() => $zq->commit(), 'commit without a transaction');
+    $say('manual transactions, nesting and mixing with transaction()');
 }
 
 $cleanup = $engines['pdo']();

@@ -129,6 +129,19 @@ $zq->transaction(function (ZQuery $db) {
 
 It commits when the callback returns and rolls back when it throws. Nested calls use savepoints.
 
+Prefer manual control? Use `beginTransaction()`, `commit()` and `rollBack()`. They share the same nesting, so mixing them with `transaction()` is safe:
+
+```php
+$zq->beginTransaction();
+try {
+    // ...queries...
+    $zq->commit();
+} catch (\Throwable $e) {
+    $zq->rollBack();
+    throw $e;
+}
+```
+
 ## Raw SQL
 
 ```php

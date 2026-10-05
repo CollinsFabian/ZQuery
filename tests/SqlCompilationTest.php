@@ -489,4 +489,65 @@ run('transaction() passes the ZQuery instance and keeps $this intact', function 
     assertSameValue('service', $service->runWithoutParameter(), 'A callback without parameters must keep $this too.');
 });
 
+run('Manual transactions commit, roll back and nest with savepoints', function (): void {
+    $connection = new NullConnection();
+    $zq = new ZQuery\ZQuery($connection);
+
+    $zq->beginTransaction();
+    $zq->beginTransaction();
+    $zq->rollBack();
+    $zq->commit();
+
+    assertSameValue(['begin', 'commit'], $connection->transactionCalls, 'Only the outermost level uses real transaction calls.');
+    assertSameValue(['SAVEPOINT zq_sp_1', 'ROLLBACK TO SAVEPOINT zq_sp_1'], $connection->executed, 'Nested levels must use savepoints.');
+
+    $zq->beginTransaction();
+    $zq->rollBack();
+    assertSameValue(['begin', 'commit', 'begin', 'rollback'], $connection->transactionCalls, 'A new transaction can start after the previous one ended.');
+});
+
+run('commit() and rollBack() without an open transaction throw', function (): void {
+    $zq = new ZQuery\ZQuery(new NullConnection());
+
+    foreach ([fn() => $zq->commit(), fn() => $zq->rollBack()] as $attempt) {
+        $threw = false;
+        try {
+            $attempt();
+        } catch (LogicException) {
+            $threw = true;
+        }
+        assertSameValue(true, $threw, 'Closing a transaction that is not open should throw.');
+    }
+});
+
+run('transaction() shares nesting with manual calls and unwinds unbalanced callbacks', function (): void {
+    $connection = new NullConnection();
+    $zq = new ZQuery\ZQuery($connection);
+
+    // transaction() inside a manual transaction becomes a savepoint
+    $zq->beginTransaction();
+    $zq->transaction(fn() => null);
+    $zq->commit();
+    assertSameValue(['begin', 'commit'], $connection->transactionCalls, 'Nested transaction() must not start a second real transaction.');
+    assertSameValue(['SAVEPOINT zq_sp_1', 'RELEASE SAVEPOINT zq_sp_1'], $connection->executed, 'transaction() inside a manual transaction should use a savepoint.');
+
+    // a callback that opens a transaction and forgets to close it
+    $connection = new NullConnection();
+    $zq = new ZQuery\ZQuery($connection);
+    $threw = false;
+    try {
+        $zq->transaction(function (ZQuery\ZQuery $db): void {
+            $db->beginTransaction();
+        });
+    } catch (LogicException) {
+        $threw = true;
+    }
+    assertSameValue(true, $threw, 'An unbalanced callback should throw.');
+    assertSameValue(['begin', 'rollback'], $connection->transactionCalls, 'The unbalanced transaction must be fully rolled back.');
+
+    // state is clean afterwards: a new transaction starts normally
+    $zq->transaction(fn() => null);
+    assertSameValue(['begin', 'rollback', 'begin', 'commit'], $connection->transactionCalls, 'Depth must reset after an unbalanced callback.');
+});
+
 echo PHP_EOL . 'SQL compilation tests passed.' . PHP_EOL;
